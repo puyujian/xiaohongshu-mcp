@@ -320,6 +320,11 @@ func addProducts(page *rod.Page, productKeywords []string) error {
 			return errors.Wrapf(err, "搜索商品失败: %s", keyword)
 		}
 
+		// 等待搜索结果加载完成
+		if err := waitForProductListLoad(modal); err != nil {
+			logrus.Warnf("等待商品搜索结果加载失败: %v", err)
+		}
+
 		card, err := findProductCard(modal, keyword)
 		if err != nil {
 			return errors.Wrapf(err, "未找到匹配商品: %s", keyword)
@@ -382,7 +387,8 @@ func inputProductSearchKeyword(input *rod.Element, keyword string) error {
 		return err
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	// 短暂等待让搜索请求发送出去
+	time.Sleep(200 * time.Millisecond)
 
 	return nil
 }
@@ -426,28 +432,22 @@ func ensureProductSelected(card *rod.Element) error {
 		return errors.Wrap(err, "未找到商品选择框")
 	}
 
-	// 检查输入框是否为空元素（只有children但没有实际内容）
-	if res, err := checkboxInput.Eval(`() => {
-        if (!this) return false;
-        const children = this.children;
-        if (children && children.length > 0) {
-            for (let i = 0; i < children.length; i++) {
-                const child = children[i];
-                if (child && (child.textContent || child.innerHTML)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }`); err == nil {
-		if !res.Value.Bool() {
-			logrus.Warn("检测到空的选择框元素，跳过此商品")
-			return nil
-		}
-	}
-
+	// 检查 checkbox 是否已经选中
 	if res, err := checkboxInput.Eval("() => this.checked"); err == nil && res.Value.Bool() {
 		return nil
+	}
+
+	// 检查 checkbox 元素是否有效可见
+	if res, err := checkboxInput.Eval(`() => {
+        if (!this) return false;
+        // 检查元素是否在 DOM 中且可交互
+        const rect = this.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+    }`); err == nil {
+		if !res.Value.Bool() {
+			logrus.Warn("检测到不可见的选择框元素")
+			return errors.New("商品选择框元素不可见")
+		}
 	}
 
 	if err := card.ScrollIntoView(); err != nil {
