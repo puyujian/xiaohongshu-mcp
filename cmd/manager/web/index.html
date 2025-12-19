@@ -74,6 +74,7 @@
         </div>
         <div class="right row">
           <button id="btnAdd">添加用户</button>
+          <button id="btnLogsManager" class="primary">日志管理</button>
           <button id="btnRefresh">刷新</button>
         </div>
       </div>
@@ -231,6 +232,57 @@
     </div>
   </div>
 
+  <!-- 日志管理 Modal -->
+  <div class="modal" id="logsModal">
+    <div class="panel card" style="width: min(980px, calc(100% - 24px));">
+      <div class="row">
+        <h1 style="margin:0;">日志管理</h1>
+        <div class="right row">
+          <button id="btnLogsRefresh" class="primary">刷新</button>
+          <button id="btnLogsClose">关闭</button>
+        </div>
+      </div>
+
+      <div class="muted" id="logsInfo" style="margin-top: 8px;"></div>
+      <div class="err" id="logsErr"></div>
+
+      <div style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>用户ID</th>
+              <th>日志文件</th>
+              <th>大小</th>
+              <th>更新时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="logsTbody"></tbody>
+        </table>
+      </div>
+
+      <!-- 查看日志子面板 -->
+      <div id="logViewer" style="margin-top: 14px; display:none;">
+        <div class="row" style="margin-bottom: 8px;">
+          <div class="muted">查看日志 - <b id="logViewerUser"></b></div>
+          <div class="right row" style="gap:8px;">
+            <select id="logViewerLines" class="w120">
+              <option value="100">最后100行</option>
+              <option value="200" selected>最后200行</option>
+              <option value="500">最后500行</option>
+              <option value="1000">最后1000行</option>
+            </select>
+            <button id="btnLogViewerRefresh" class="primary">刷新内容</button>
+            <button id="btnLogViewerClose">收起</button>
+          </div>
+        </div>
+        <div id="logViewerMeta" class="muted" style="margin-bottom: 8px;"></div>
+        <pre id="logViewerContent" class="json-output" style="max-height: 420px; white-space: pre-wrap; word-break: break-all;">点击"查看"加载日志</pre>
+        <div class="err" id="logViewerErr"></div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const API = '/api/admin/v1';
     const tbody = document.getElementById('tbody');
@@ -256,6 +308,18 @@
     let toolArgEls = new Map();  // 存储每个字段的input元素引用
     let isJsonMode = false;      // 是否处于JSON编辑模式
 
+    // 日志管理 Modal
+    const logsModal = document.getElementById('logsModal');
+    const logsTbody = document.getElementById('logsTbody');
+    const logsInfo = document.getElementById('logsInfo');
+    const logsErr = document.getElementById('logsErr');
+    const logViewer = document.getElementById('logViewer');
+    const logViewerUser = document.getElementById('logViewerUser');
+    const logViewerMeta = document.getElementById('logViewerMeta');
+    const logViewerContent = document.getElementById('logViewerContent');
+    const logViewerErr = document.getElementById('logViewerErr');
+    let currentLogViewerUserID = null;
+
     function esc(s) {
       return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
@@ -275,7 +339,129 @@
       return res.status === 204 || res.status === 201 ? null : await res.json();
     }
 
-    // 用户配置 Modal 函数
+    // 格式化字节大小
+    function fmtBytes(n) {
+      const v = Number(n || 0);
+      if (!isFinite(v) || v <= 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let idx = 0;
+      let cur = v;
+      while (cur >= 1024 && idx < units.length - 1) {
+        cur /= 1024;
+        idx++;
+      }
+      const fixed = idx === 0 ? 0 : 2;
+      return cur.toFixed(fixed) + ' ' + units[idx];
+    }
+
+    // ========== 日志管理 Modal 函数 ==========
+    function openLogsModal() {
+      logsErr.textContent = '';
+      logsInfo.textContent = '';
+      logsModal.classList.add('show');
+      hideLogViewer();
+      refreshLogsOverview();
+    }
+
+    function closeLogsModal() {
+      logsModal.classList.remove('show');
+      hideLogViewer();
+    }
+
+    function hideLogViewer() {
+      currentLogViewerUserID = null;
+      logViewer.style.display = 'none';
+      logViewerUser.textContent = '';
+      logViewerMeta.textContent = '';
+      logViewerContent.textContent = '点击"查看"加载日志';
+      logViewerErr.textContent = '';
+    }
+
+    async function refreshLogsOverview() {
+      logsErr.textContent = '';
+      try {
+        const data = await api('GET', '/logs');
+        const items = data.items || [];
+        logsInfo.textContent = `data_dir=${data.data_dir || ''}（共 ${items.length} 个用户）`;
+        renderLogsOverview(items);
+      } catch (e) {
+        logsErr.textContent = e.message;
+      }
+    }
+
+    function renderLogsOverview(items) {
+      logsTbody.innerHTML = items.map(it => {
+        const sizeText = it.exists ? fmtBytes(it.size_bytes) : '-';
+        const mtimeText = it.exists && it.mtime ? it.mtime : '-';
+        const dlDis = it.exists ? '' : 'disabled';
+        const clearDis = it.exists ? '' : 'disabled';
+        return `
+          <tr>
+            <td><b>${esc(it.user_id)}</b>${it.exists ? '' : '<div class="muted">无日志</div>'}</td>
+            <td class="muted">${esc(it.log_file || '-')}</td>
+            <td class="muted">${esc(sizeText)}</td>
+            <td class="muted">${esc(mtimeText)}</td>
+            <td class="row" style="gap:8px;">
+              <button data-act="view" data-id="${esc(it.user_id)}">查看</button>
+              <button data-act="download" data-id="${esc(it.user_id)}" ${dlDis}>下载</button>
+              <button data-act="clear" data-id="${esc(it.user_id)}" ${clearDis} style="background:#dc2626;">清空</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function openLogViewer(userID) {
+      currentLogViewerUserID = userID;
+      logViewerUser.textContent = userID;
+      logViewerMeta.textContent = '';
+      logViewerErr.textContent = '';
+      logViewerContent.textContent = '加载中...';
+      logViewer.style.display = 'block';
+      await refreshLogViewer();
+    }
+
+    async function refreshLogViewer() {
+      if (!currentLogViewerUserID) return;
+      logViewerErr.textContent = '';
+      const lines = document.getElementById('logViewerLines').value;
+      try {
+        const data = await api('GET', `/users/${encodeURIComponent(currentLogViewerUserID)}/debug/logs?lines=${lines}`);
+        if (!data.exists) {
+          logViewerMeta.textContent = `路径: ${data.log_file || '-'}`;
+          logViewerContent.textContent = '日志文件不存在';
+          return;
+        }
+        const totalInfo = data.total_lines >= 0 ? `总行数 ${data.total_lines}` : '大文件模式';
+        const truncInfo = data.truncated ? `（显示最后${data.lines}行）` : '';
+        logViewerMeta.textContent = `路径: ${data.log_file} | 大小: ${fmtBytes(data.size_bytes)} | ${totalInfo} ${truncInfo}`;
+        logViewerContent.textContent = data.content || '(空日志)';
+        logViewerContent.scrollTop = logViewerContent.scrollHeight;
+      } catch (e) {
+        logViewerErr.textContent = e.message;
+      }
+    }
+
+    async function clearUserLog(userID) {
+      if (!confirm(`确认清空用户 ${userID} 的日志？`)) return;
+      logsErr.textContent = '';
+      try {
+        await api('DELETE', `/users/${encodeURIComponent(userID)}/debug/logs`);
+        await refreshLogsOverview();
+        if (currentLogViewerUserID === userID) {
+          await refreshLogViewer();
+        }
+      } catch (e) {
+        logsErr.textContent = e.message;
+      }
+    }
+
+    function downloadUserLog(userID) {
+      const url = API + `/users/${encodeURIComponent(userID)}/debug/logs/download`;
+      window.open(url, '_blank');
+    }
+
+    // ========== 用户配置 Modal 函数 ==========
     function openModal(user) {
       formErr.textContent = '';
       modal.classList.add('show');
@@ -1073,7 +1259,6 @@
           ? `<button data-act="stop" data-id="${esc(u.id)}">停止</button>`
           : `<button data-act="start" data-id="${esc(u.id)}">启动</button>`;
         const dis = u.running ? 'disabled' : '';
-        const debugDis = u.running && u.health_ok ? '' : 'disabled';
         const url = u.url ? `<a class="link" href="${esc(u.url)}" target="_blank">${esc(u.url)}</a>` : '-';
         return `
           <tr>
@@ -1089,7 +1274,7 @@
             </td>
             <td class="row" style="gap:8px;">
               ${ops}
-              <button data-act="debug" data-id="${esc(u.id)}" class="primary" ${debugDis}>调试</button>
+              <button data-act="debug" data-id="${esc(u.id)}" class="primary">调试</button>
               <button data-act="edit" data-id="${esc(u.id)}" ${dis}>编辑</button>
               <button data-act="del" data-id="${esc(u.id)}" ${dis}>删除</button>
             </td>
@@ -1134,6 +1319,7 @@
 
     // 用户配置 Modal 事件
     document.getElementById('btnAdd').addEventListener('click', () => openModal(null));
+    document.getElementById('btnLogsManager').addEventListener('click', openLogsModal);
     document.getElementById('btnRefresh').addEventListener('click', refresh);
     document.getElementById('btnClose').addEventListener('click', closeModal);
     document.getElementById('btnCancel').addEventListener('click', closeModal);
@@ -1182,6 +1368,38 @@
     document.getElementById('toggleJsonMode').addEventListener('click', toggleJsonMode);
     document.getElementById('toolArgsJson').addEventListener('input', updateToolArgsPreview);
     document.getElementById('btnCallTool').addEventListener('click', callTool);
+
+    // 日志管理 Modal 事件
+    document.getElementById('btnLogsClose').addEventListener('click', closeLogsModal);
+    document.getElementById('btnLogsRefresh').addEventListener('click', refreshLogsOverview);
+    document.getElementById('btnLogViewerClose').addEventListener('click', hideLogViewer);
+    document.getElementById('btnLogViewerRefresh').addEventListener('click', refreshLogViewer);
+    document.getElementById('logViewerLines').addEventListener('change', refreshLogViewer);
+
+    logsTbody.addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('button');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      const id = btn.dataset.id;
+      if (!act || !id) return;
+
+      try {
+        if (act === 'view') {
+          await openLogViewer(id);
+          return;
+        }
+        if (act === 'download') {
+          downloadUserLog(id);
+          return;
+        }
+        if (act === 'clear') {
+          await clearUserLog(id);
+          return;
+        }
+      } catch (e) {
+        logsErr.textContent = e.message;
+      }
+    });
 
     refresh();
     setInterval(refresh, 2000);

@@ -87,7 +87,8 @@ func (pm *ProcessManager) GetStatus(userID string) ProcessStatus {
 }
 
 // StartUser 启动用户进程
-func (pm *ProcessManager) StartUser(ctx context.Context, params StartUserParams) error {
+// 使用占位机制防止并发竞态：先占位再启动，失败时清理
+func (pm *ProcessManager) StartUser(ctx context.Context, params StartUserParams) (err error) {
 	if params.User.ID == "" {
 		return fmt.Errorf("id 不能为空")
 	}
@@ -101,15 +102,34 @@ func (pm *ProcessManager) StartUser(ctx context.Context, params StartUserParams)
 		return fmt.Errorf("data_dir 不能为空")
 	}
 
+	// 先占位，防止并发启动同一用户
 	pm.mu.Lock()
 	if _, ok := pm.procs[params.User.ID]; ok {
 		pm.mu.Unlock()
 		return fmt.Errorf("用户进程已在运行")
 	}
+	rp := &runningProc{
+		startedAt: time.Now(),
+		done:      make(chan error, 1),
+	}
+	pm.procs[params.User.ID] = rp
 	pm.mu.Unlock()
 
+	// 标记是否成功启动进程
+	started := false
+	defer func() {
+		if err != nil && !started {
+			// 启动失败，清理占位
+			pm.mu.Lock()
+			if pm.procs[params.User.ID] == rp {
+				delete(pm.procs, params.User.ID)
+			}
+			pm.mu.Unlock()
+		}
+	}()
+
 	paths := pm.DerivePaths(params.DataDir, params.User.ID, params.User.Port)
-	if err := ensureDirs(paths); err != nil {
+	if err = ensureDirs(paths); err != nil {
 		return err
 	}
 
@@ -132,36 +152,33 @@ func (pm *ProcessManager) StartUser(ctx context.Context, params StartUserParams)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
-	if err := cmd.Start(); err != nil {
+	if err = cmd.Start(); err != nil {
 		_ = logFile.Close()
 		return fmt.Errorf("启动子进程失败: %w", err)
 	}
 
-	rp := &runningProc{
-		cmd:       cmd,
-		logFile:   logFile,
-		startedAt: time.Now(),
-		done:      make(chan error, 1),
-	}
-
-	pm.mu.Lock()
-	pm.procs[params.User.ID] = rp
-	pm.mu.Unlock()
+	// 进程已启动，更新占位信息
+	rp.cmd = cmd
+	rp.logFile = logFile
+	started = true
 
 	go func(userID string, p *runningProc) {
-		err := cmd.Wait()
+		waitErr := cmd.Wait()
 		_ = logFile.Close()
 		pm.mu.Lock()
-		if err != nil {
-			p.lastError = err.Error()
+		if waitErr != nil {
+			p.lastError = waitErr.Error()
 		}
-		delete(pm.procs, userID)
+		// 仅在仍指向同一对象时删除，避免极端情况下误删
+		if pm.procs[userID] == p {
+			delete(pm.procs, userID)
+		}
 		pm.mu.Unlock()
-		p.done <- err
+		p.done <- waitErr
 	}(params.User.ID, rp)
 
 	// 启动后健康检查
-	if err := pm.waitHealthy(ctx, params.User.Port, 30*time.Second, 500*time.Millisecond); err != nil {
+	if err = pm.waitHealthy(ctx, params.User.Port, 30*time.Second, 500*time.Millisecond); err != nil {
 		_ = pm.StopUser(context.Background(), params.User.ID, 10*time.Second)
 		return err
 	}

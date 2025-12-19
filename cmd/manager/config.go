@@ -15,9 +15,10 @@ var validIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // UserConfig 用户配置
 type UserConfig struct {
-	ID    string `json:"id"`
-	Port  int    `json:"port"`
-	Proxy string `json:"proxy,omitempty"`
+	ID        string `json:"id"`
+	Port      int    `json:"port"`
+	Proxy     string `json:"proxy,omitempty"`
+	AutoStart bool   `json:"auto_start,omitempty"` // 上次运行态，manager 重启时自动恢复
 }
 
 // ManagerConfig 管理器配置
@@ -229,6 +230,23 @@ func (s *Store) DeleteUser(id string) error {
 	}
 	s.cfg.Users = append(s.cfg.Users[:idx], s.cfg.Users[idx+1:]...)
 	return s.saveLocked()
+}
+
+// SetUserAutoStart 仅更新 auto_start 字段，避免误覆盖 proxy/port
+func (s *Store) SetUserAutoStart(id string, autoStart bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if id == "" {
+		return fmt.Errorf("id 不能为空")
+	}
+	for i := range s.cfg.Users {
+		if s.cfg.Users[i].ID == id {
+			s.cfg.Users[i].AutoStart = autoStart
+			return s.saveLocked()
+		}
+	}
+	return fmt.Errorf("用户不存在: %s", id)
 }
 
 func (s *Store) saveLocked() error {
