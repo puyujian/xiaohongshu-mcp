@@ -74,7 +74,9 @@
         </div>
         <div class="right row">
           <button id="btnAdd">添加用户</button>
-          <button id="btnLogsManager" class="primary">日志管理</button>
+          <button id="btnStartAll" class="primary">批量启动</button>
+          <button id="btnStopAll">批量停止</button>
+          <button id="btnLogsManager">日志管理</button>
           <button id="btnRefresh">刷新</button>
         </div>
       </div>
@@ -1317,8 +1319,58 @@
       }
     });
 
+    // 批量操作函数
+    async function batchStartAll() {
+      const btn = document.getElementById('btnStartAll');
+      btn.disabled = true;
+      btn.textContent = '启动中...';
+      globalErr.textContent = '';
+      try {
+        const resp = await api('POST', '/users/batch/start', { ids: [] });
+        const bad = (resp.results || []).filter(x => x.status === 'error' || x.status === 'not_found');
+        const summary = resp.summary || {};
+        if (bad.length) {
+          alert(`批量启动完成\n请求: ${summary.requested || 0}, 成功启动: ${summary.started || 0}\n\n部分失败:\n` + bad.map(x => `${x.id}: ${x.error || x.status}`).join('\n'));
+        } else {
+          globalInfo.textContent = `批量启动完成: 请求 ${summary.requested || 0}, 成功 ${summary.started || 0}`;
+        }
+        await refresh();
+      } catch (e) {
+        globalErr.textContent = e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '批量启动';
+      }
+    }
+
+    async function batchStopAll() {
+      if (!confirm('确认批量停止全部用户？')) return;
+      const btn = document.getElementById('btnStopAll');
+      btn.disabled = true;
+      btn.textContent = '停止中...';
+      globalErr.textContent = '';
+      try {
+        const resp = await api('POST', '/users/batch/stop', { ids: [] });
+        const bad = (resp.results || []).filter(x => x.status === 'error' || x.status === 'not_found');
+        const summary = resp.summary || {};
+        if (bad.length) {
+          alert(`批量停止完成\n请求: ${summary.requested || 0}, 已停止: ${summary.stopped || 0}\n\n部分失败:\n` + bad.map(x => `${x.id}: ${x.error || x.status}`).join('\n'));
+        } else {
+          globalInfo.textContent = `批量停止完成: 请求 ${summary.requested || 0}, 已停止 ${summary.stopped || 0}`;
+        }
+        await refresh();
+      } catch (e) {
+        globalErr.textContent = e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '批量停止';
+      }
+    }
+
     // 用户配置 Modal 事件
     document.getElementById('btnAdd').addEventListener('click', () => openModal(null));
+    document.getElementById('btnStartAll').addEventListener('click', batchStartAll);
+    document.getElementById('btnStopAll').addEventListener('click', batchStopAll);
     document.getElementById('btnLogsManager').addEventListener('click', openLogsModal);
     document.getElementById('btnRefresh').addEventListener('click', refresh);
     document.getElementById('btnClose').addEventListener('click', closeModal);

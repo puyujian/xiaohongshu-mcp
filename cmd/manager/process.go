@@ -157,9 +157,11 @@ func (pm *ProcessManager) StartUser(ctx context.Context, params StartUserParams)
 		return fmt.Errorf("启动子进程失败: %w", err)
 	}
 
-	// 进程已启动，更新占位信息
+	// 进程已启动，更新占位信息（需要加锁，避免与 GetStatus 读操作竞争）
+	pm.mu.Lock()
 	rp.cmd = cmd
 	rp.logFile = logFile
+	pm.mu.Unlock()
 	started = true
 
 	go func(userID string, p *runningProc) {
