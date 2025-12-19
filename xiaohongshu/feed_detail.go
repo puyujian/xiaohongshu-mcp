@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/avast/retry-go/v4"
@@ -156,6 +157,11 @@ func (cl *commentLoader) load() error {
 	scrollToCommentsArea(cl.page)
 	sleepRandom(humanDelayRange.min, humanDelayRange.max)
 
+	// 检查是否没有评论
+	if cl.checkNoComments() {
+		return nil
+	}
+
 	for cl.stats.attempts = 0; cl.stats.attempts < maxAttempts; cl.stats.attempts++ {
 		logrus.Debugf("=== 尝试 %d/%d ===", cl.stats.attempts+1, maxAttempts)
 
@@ -189,6 +195,14 @@ func (cl *commentLoader) calculateMaxAttempts() int {
 		return cl.config.MaxCommentItems * 3
 	}
 	return defaultMaxAttempts
+}
+
+func (cl *commentLoader) checkNoComments() bool {
+	if checkNoCommentsArea(cl.page) {
+		logrus.Infof("✓ 检测到无评论区域（这是一片荒地），跳过加载")
+		return true
+	}
+	return false
 }
 
 func (cl *commentLoader) checkComplete() bool {
@@ -246,19 +260,16 @@ func (cl *commentLoader) updateState(currentCount int) {
 }
 
 func (cl *commentLoader) shouldStopAtTarget(currentCount int) bool {
-	if cl.config.MaxCommentItems <= 0 || currentCount < cl.config.MaxCommentItems {
+	// 如果未设置最大评论数，继续加载
+	if cl.config.MaxCommentItems <= 0 {
 		return false
 	}
 
-	if cl.state.stagnantChecks >= stagnantCheckThreshold {
-		logrus.Infof("✓ 已达到目标评论数: %d/%d (停滞%d次), 停止加载",
-			currentCount, cl.config.MaxCommentItems, cl.state.stagnantChecks)
+	// 如果已达到或超过目标评论数，立即停止
+	if currentCount >= cl.config.MaxCommentItems {
+		logrus.Infof("✓ 已达到目标评论数: %d/%d, 停止加载",
+			currentCount, cl.config.MaxCommentItems)
 		return true
-	}
-
-	if cl.state.stagnantChecks > 0 {
-		logrus.Debugf("已达目标数 %d/%d，再确认 %d 次...",
-			currentCount, cl.config.MaxCommentItems, stagnantCheckThreshold-cl.state.stagnantChecks)
 	}
 
 	return false
@@ -526,24 +537,47 @@ func calculateScrollDelta(viewportHeight int, baseRatio float64) float64 {
 
 func scrollToCommentsArea(page *rod.Page) {
 	logrus.Info("滚动到评论区...")
-	page.MustEval(`() => {
-		const container = document.querySelector('.comments-container');
-		if (container) {
-			container.scrollIntoView({behavior: 'smooth', block: 'start'});
-		}
-	}`)
+
+	// 先定位到评论区
+	if el, err := page.Timeout(2 * time.Second).Element(".comments-container"); err == nil {
+		el.MustScrollIntoView()
+	}
+	// 等待滚动完成
+	time.Sleep(500 * time.Millisecond)
+
+	// 触发一次小滚动，激活懒加载机制
+	smartScroll(page, 100)
+}
+
+// smartScroll 智能滚动：触发滚轮事件以正确触发懒加载
+func smartScroll(page *rod.Page, delta float64) {
+	page.MustEval(`(delta) => {
+		// 查找滚动目标元素
+		let targetElement = document.querySelector('.note-scroller') 
+			|| document.querySelector('.interaction-container') 
+			|| document.documentElement;
+		
+		// 触发滚轮事件（关键！这样才能触发懒加载）
+		const wheelEvent = new WheelEvent('wheel', {
+			deltaY: delta,
+			deltaMode: 0, // 像素模式
+			bubbles: true,
+			cancelable: true,
+			view: window
+		});
+		targetElement.dispatchEvent(wheelEvent);
+	}`, delta)
 }
 
 func scrollToLastComment(page *rod.Page) {
-	page.MustEval(`() => {
-		const container = document.querySelector('.comments-container');
-		if (!container) return;
-		const comments = container.querySelectorAll('.parent-comment');
-		if (comments.length > 0) {
-			const lastComment = comments[comments.length - 1];
-			lastComment.scrollIntoView({behavior: 'smooth', block: 'center'});
-		}
-	}`)
+	// 获取所有主评论元素
+	elements, err := page.Timeout(2 * time.Second).Elements(".parent-comment")
+	if err != nil || len(elements) == 0 {
+		return
+	}
+	// 滚动到最后一个评论
+	lastComment := elements[len(elements)-1]
+	lastComment.MustScrollIntoView()
 }
 
 // ========== DOM 查询 ==========
@@ -641,6 +675,25 @@ func getTotalCommentCount(page *rod.Page) int {
 	}
 
 	return result
+}
+
+func checkNoCommentsArea(page *rod.Page) bool {
+	// 查找无评论区域
+	noCommentsEl, err := page.Timeout(2 * time.Second).Element(".no-comments-text")
+	if err != nil {
+		// 未找到无评论元素，说明有评论或评论区正常
+		return false
+	}
+
+	// 获取文本内容
+	text, err := noCommentsEl.Text()
+	if err != nil {
+		return false
+	}
+
+	// 检查是否包含"这是一片荒地"等关键词
+	text = strings.TrimSpace(text)
+	return strings.Contains(text, "这是一片荒地")
 }
 
 func checkEndContainer(page *rod.Page) bool {
