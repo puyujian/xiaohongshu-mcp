@@ -152,11 +152,27 @@
       <div class="tab-content active" id="tab-login">
         <div class="row" style="margin-bottom: 12px;">
           <button id="btnGetQRCode" class="primary">获取登录二维码</button>
+          <label class="switch" style="margin-left: 12px;">
+            <input type="checkbox" id="toggleBrowserView" />
+            <span class="muted">显示浏览器视图 (实验性)</span>
+          </label>
           <span class="muted" id="loginStatusText">未检查</span>
         </div>
         <div class="qr-container" id="qrContainer" style="display:none;">
           <img id="qrImage" src="" alt="登录二维码" />
           <div class="muted" id="qrTimeout"></div>
+        </div>
+        <div id="browserViewContainer" style="display:none; margin-top: 12px;">
+          <div class="row" style="margin-bottom:8px;">
+            <input id="browserInput" autocomplete="off" placeholder="输入文字/验证码..." style="width:200px;" />
+            <button id="btnBrowserInput">发送文字</button>
+            <button id="btnBrowserRefresh">强制刷新</button>
+          </div>
+          <div style="position:relative; border:1px solid var(--line); border-radius:8px; display:inline-block; max-width: 100%; overflow: hidden; background:#000;">
+            <img id="browserScreen" draggable="false" style="max-width:100%; cursor:crosshair; display:block; user-select:none;" alt="浏览器截图" />
+            <div id="clickFeedback" style="position:absolute; width:16px; height:16px; border-radius:50%; background:rgba(255,0,0,0.7); pointer-events:none; display:none; transform: translate(-50%, -50%); box-shadow: 0 0 8px rgba(255,0,0,0.5);"></div>
+          </div>
+          <div class="muted" style="margin-top:4px;">点击画面可发送点击事件，用于处理二次验证</div>
         </div>
         <div class="err" id="loginErr"></div>
       </div>
@@ -303,6 +319,7 @@
     const debugModal = document.getElementById('debugModal');
     let currentDebugUser = null;
     let loginPollTimer = null;
+    let browserPollTimer = null;
     let logRefreshTimer = null;
     let toolsCache = [];
     // 动态表单相关状态
@@ -496,6 +513,10 @@
         clearInterval(loginPollTimer);
         loginPollTimer = null;
       }
+      if (browserPollTimer) {
+        clearInterval(browserPollTimer);
+        browserPollTimer = null;
+      }
       if (logRefreshTimer) {
         clearInterval(logRefreshTimer);
         logRefreshTimer = null;
@@ -503,6 +524,8 @@
 
       // 重置状态
       document.getElementById('qrContainer').style.display = 'none';
+      document.getElementById('toggleBrowserView').checked = false;
+      document.getElementById('browserViewContainer').style.display = 'none';
       document.getElementById('loginErr').textContent = '';
       document.getElementById('cookieErr').textContent = '';
       document.getElementById('mcpErr').textContent = '';
@@ -537,6 +560,10 @@
       if (loginPollTimer) {
         clearInterval(loginPollTimer);
         loginPollTimer = null;
+      }
+      if (browserPollTimer) {
+        clearInterval(browserPollTimer);
+        browserPollTimer = null;
       }
       if (logRefreshTimer) {
         clearInterval(logRefreshTimer);
@@ -626,6 +653,75 @@
           // 忽略轮询错误
         }
       }, 2000);
+    }
+
+    // 浏览器视图相关
+    function toggleBrowserView() {
+      const show = document.getElementById('toggleBrowserView').checked;
+      const container = document.getElementById('browserViewContainer');
+      container.style.display = show ? 'block' : 'none';
+
+      if (browserPollTimer) {
+        clearInterval(browserPollTimer);
+        browserPollTimer = null;
+      }
+
+      if (show && currentDebugUser) {
+        refreshBrowserScreen();
+        browserPollTimer = setInterval(refreshBrowserScreen, 1500);
+      }
+    }
+
+    function refreshBrowserScreen() {
+      if (!currentDebugUser) return;
+      const img = document.getElementById('browserScreen');
+      // 添加时间戳防止缓存
+      img.src = `${API}/users/${encodeURIComponent(currentDebugUser.id)}/debug/login/browser/screenshot?t=${Date.now()}`;
+    }
+
+    async function sendBrowserAction(type, data) {
+      if (!currentDebugUser) return;
+      try {
+        await api('POST', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/login/browser/action`, {
+          type, ...data
+        });
+        // 操作后立即刷新截图
+        setTimeout(refreshBrowserScreen, 300);
+      } catch (e) {
+        console.error('Browser action failed', e);
+        document.getElementById('loginErr').textContent = '操作失败: ' + e.message;
+      }
+    }
+
+    function handleBrowserScreenClick(e) {
+      const img = e.target;
+      const rect = img.getBoundingClientRect();
+      // 计算点击位置相对于图片元素的坐标
+      const clientX = e.clientX - rect.left;
+      const clientY = e.clientY - rect.top;
+
+      // 映射到实际图片尺寸（浏览器坐标）
+      if (img.naturalWidth && img.clientWidth) {
+        const x = (clientX / img.clientWidth) * img.naturalWidth;
+        const y = (clientY / img.clientHeight) * img.naturalHeight;
+
+        // 视觉反馈
+        const dot = document.getElementById('clickFeedback');
+        dot.style.left = clientX + 'px';
+        dot.style.top = clientY + 'px';
+        dot.style.display = 'block';
+        setTimeout(() => dot.style.display = 'none', 400);
+
+        sendBrowserAction('click', { x, y });
+      }
+    }
+
+    function sendBrowserInput() {
+      const input = document.getElementById('browserInput');
+      const text = input.value;
+      if (!text) return;
+      sendBrowserAction('input', { text });
+      input.value = ''; // 发送后清空
     }
 
     // Cookies相关
@@ -1405,6 +1501,13 @@
     });
 
     document.getElementById('btnGetQRCode').addEventListener('click', getQRCode);
+    document.getElementById('toggleBrowserView').addEventListener('change', toggleBrowserView);
+    document.getElementById('browserScreen').addEventListener('click', handleBrowserScreenClick);
+    document.getElementById('btnBrowserInput').addEventListener('click', sendBrowserInput);
+    document.getElementById('btnBrowserRefresh').addEventListener('click', refreshBrowserScreen);
+    document.getElementById('browserInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendBrowserInput();
+    });
     document.getElementById('btnRefreshCookies').addEventListener('click', refreshCookies);
     document.getElementById('btnImportCookies').addEventListener('click', () => {
       const input = document.getElementById('cookieFileInput');

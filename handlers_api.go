@@ -64,6 +64,40 @@ func (s *AppServer) getLoginQrcodeHandler(c *gin.Context) {
 	respondSuccess(c, result, "获取登录二维码成功")
 }
 
+// getLoginBrowserScreenshotHandler 获取当前登录浏览器的截图
+func (s *AppServer) getLoginBrowserScreenshotHandler(c *gin.Context) {
+	img, err := s.xiaohongshuService.GetLoginBrowserScreenshot(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "browser not active"})
+		return
+	}
+	c.Data(http.StatusOK, "image/png", img)
+}
+
+// BrowserActionRequest 浏览器交互请求
+type BrowserActionRequest struct {
+	Type string  `json:"type"`
+	X    float64 `json:"x,omitempty"`
+	Y    float64 `json:"y,omitempty"`
+	Text string  `json:"text,omitempty"`
+}
+
+// postLoginBrowserActionHandler 处理浏览器交互
+func (s *AppServer) postLoginBrowserActionHandler(c *gin.Context) {
+	var req BrowserActionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST", "参数错误", err.Error())
+		return
+	}
+
+	err := s.xiaohongshuService.ProcessLoginBrowserAction(c.Request.Context(), req.Type, req.X, req.Y, req.Text)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "ACTION_FAILED", "执行操作失败", err.Error())
+		return
+	}
+	respondSuccess(c, nil, "操作成功")
+}
+
 // deleteCookiesHandler 删除 cookies，重置登录状态
 func (s *AppServer) deleteCookiesHandler(c *gin.Context) {
 	err := s.xiaohongshuService.DeleteCookies(c.Request.Context())

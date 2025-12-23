@@ -40,6 +40,8 @@ func setupRoutes(appServer *AppServer) *gin.Engine {
 	{
 		api.GET("/login/status", appServer.checkLoginStatusHandler)
 		api.GET("/login/qrcode", appServer.getLoginQrcodeHandler)
+		api.GET("/login/browser/screenshot", appServer.getLoginBrowserScreenshotHandler)
+		api.POST("/login/browser/action", appServer.postLoginBrowserActionHandler)
 		api.DELETE("/login/cookies", appServer.deleteCookiesHandler)
 		api.POST("/publish", appServer.publishHandler)
 		api.POST("/publish_video", appServer.publishVideoHandler)

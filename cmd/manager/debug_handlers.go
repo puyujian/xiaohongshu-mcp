@@ -204,6 +204,87 @@ func (a *App) GetDebugLoginStatus(c *gin.Context) {
 	c.Data(status, contentType, data)
 }
 
+// GetDebugBrowserScreenshot 获取浏览器截图
+func (a *App) GetDebugBrowserScreenshot(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+
+	user, ok := a.store.GetUser(id)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	st := a.proc.GetStatus(id)
+	if !st.Running {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户进程未运行"})
+		return
+	}
+
+	// 健康检查
+	if !a.proc.CheckHealth(user.Port, 800*time.Millisecond) {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户实例健康检查失败，请稍后重试"})
+		return
+	}
+
+	// 转发到用户实例
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/v1/login/browser/screenshot", user.Port)
+	status, contentType, data, err := a.proxyGet(c.Request.Context(), url, 10*time.Second)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("转发请求失败: %v", err)})
+		return
+	}
+
+	c.Data(status, contentType, data)
+}
+
+// PostDebugBrowserAction 发送浏览器交互动作
+func (a *App) PostDebugBrowserAction(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+
+	user, ok := a.store.GetUser(id)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	st := a.proc.GetStatus(id)
+	if !st.Running {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户进程未运行"})
+		return
+	}
+
+	// 健康检查
+	if !a.proc.CheckHealth(user.Port, 800*time.Millisecond) {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户实例健康检查失败，请稍后重试"})
+		return
+	}
+
+	// 读取请求体
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求体失败"})
+		return
+	}
+
+	// 转发到用户实例
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/v1/login/browser/action", user.Port)
+	status, contentType, data, err := a.proxyPostJSON(c.Request.Context(), url, bytes.NewReader(body), 10*time.Second)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("转发请求失败: %v", err)})
+		return
+	}
+
+	c.Data(status, contentType, data)
+}
+
 // GetDebugCookies 获取Cookie状态
 func (a *App) GetDebugCookies(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
@@ -619,6 +700,34 @@ func (a *App) proxyRequest(ctx context.Context, method, url string, timeout time
 		contentType = "application/octet-stream"
 	}
 	return resp.StatusCode, contentType, body, nil
+}
+
+// proxyPostJSON 转发POST请求（带JSON body）
+func (a *App) proxyPostJSON(ctx context.Context, url string, body io.Reader, timeout time.Duration) (int, string, []byte, error) {
+	client := &http.Client{Timeout: timeout}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return 0, "", nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, "", nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, "", nil, err
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	return resp.StatusCode, contentType, respBody, nil
 }
 
 // LogsResponse 日志响应

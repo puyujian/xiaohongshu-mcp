@@ -74,6 +74,8 @@ func main() {
 		api.GET("/users/:id/debug/summary", app.GetDebugSummary)
 		api.GET("/users/:id/debug/login/qrcode", app.GetDebugLoginQRCode)
 		api.GET("/users/:id/debug/login/status", app.GetDebugLoginStatus)
+		api.GET("/users/:id/debug/login/browser/screenshot", app.GetDebugBrowserScreenshot)
+		api.POST("/users/:id/debug/login/browser/action", app.PostDebugBrowserAction)
 		api.GET("/users/:id/debug/cookies", app.GetDebugCookies)
 		api.POST("/users/:id/debug/cookies/import", app.ImportDebugCookies)
 		api.DELETE("/users/:id/debug/cookies", app.DeleteDebugCookies)
