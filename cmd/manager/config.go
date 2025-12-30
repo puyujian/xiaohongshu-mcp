@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -18,6 +19,7 @@ type UserConfig struct {
 	ID        string `json:"id"`
 	Port      int    `json:"port"`
 	Proxy     string `json:"proxy,omitempty"`
+	UserAgent string `json:"user_agent,omitempty"` // 浏览器 User-Agent（首次创建时自动生成）
 	AutoStart bool   `json:"auto_start,omitempty"` // 上次运行态，manager 重启时自动恢复
 }
 
@@ -153,6 +155,12 @@ func (s *Store) GetUser(id string) (UserConfig, bool) {
 func (s *Store) CreateUser(u UserConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// 如果未指定 UserAgent，自动生成随机 UA
+	u.UserAgent = strings.TrimSpace(u.UserAgent)
+	if u.UserAgent == "" {
+		u.UserAgent = generateRandomUserAgent()
+	}
 
 	if err := validateUser(u); err != nil {
 		return err
@@ -319,6 +327,15 @@ func validateUser(u UserConfig) error {
 	}
 	if u.Port <= 0 || u.Port > 65535 {
 		return fmt.Errorf("port 非法: %d", u.Port)
+	}
+	// 验证 UserAgent
+	if ua := strings.TrimSpace(u.UserAgent); ua != "" {
+		if len(ua) > 1024 {
+			return fmt.Errorf("user_agent 过长（最大 1024 字符）")
+		}
+		if strings.ContainsAny(ua, "\r\n") {
+			return fmt.Errorf("user_agent 不允许包含换行符")
+		}
 	}
 	return nil
 }

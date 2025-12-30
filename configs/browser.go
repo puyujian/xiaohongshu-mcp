@@ -4,6 +4,7 @@ var (
 	useHeadless = true
 	binPath     = ""
 	proxy       = "" // 代理地址
+	userAgent   = "" // 浏览器 User-Agent
 	userDataDir = "" // 用户数据目录
 )
 
@@ -32,6 +33,16 @@ func SetProxy(p string) {
 // GetProxy 获取代理地址
 func GetProxy() string {
 	return proxy
+}
+
+// SetUserAgent 设置浏览器 User-Agent
+func SetUserAgent(ua string) {
+	userAgent = ua
+}
+
+// GetUserAgent 获取浏览器 User-Agent
+func GetUserAgent() string {
+	return userAgent
 }
 
 // SetUserDataDir 设置用户数据目录

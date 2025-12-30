@@ -605,6 +605,9 @@ func createBrowser() (*browser.Browser, error) {
 	if userDataDir := configs.GetUserDataDir(); userDataDir != "" {
 		opts = append(opts, browser.WithUserDataDir(userDataDir))
 	}
+	if userAgent := configs.GetUserAgent(); userAgent != "" {
+		opts = append(opts, browser.WithUserAgent(userAgent))
+	}
 	return browser.NewBrowser(configs.IsHeadless(), opts...)
 }
 

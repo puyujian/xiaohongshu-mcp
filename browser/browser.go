@@ -17,6 +17,9 @@ import (
 	"github.com/xpzouying/xiaohongshu-mcp/cookies"
 )
 
+// defaultUserAgent 默认 User-Agent（向后兼容）
+const defaultUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
 // Browser 浏览器实例
 type Browser struct {
 	browser  *rod.Browser
@@ -28,6 +31,7 @@ type Config struct {
 	Headless    bool
 	BinPath     string
 	Proxy       string // 代理地址，如 http://127.0.0.1:7890
+	UserAgent   string // 浏览器 User-Agent（为空使用默认值）
 	UserDataDir string // 用户数据目录，多用户隔离必须
 }
 
@@ -48,6 +52,13 @@ func WithProxy(proxy string) Option {
 	}
 }
 
+// WithUserAgent 设置浏览器 User-Agent
+func WithUserAgent(ua string) Option {
+	return func(c *Config) {
+		c.UserAgent = ua
+	}
+}
+
 // WithUserDataDir 设置用户数据目录
 func WithUserDataDir(dir string) Option {
 	return func(c *Config) {
@@ -62,11 +73,17 @@ func NewBrowser(headless bool, options ...Option) (*Browser, error) {
 		opt(cfg)
 	}
 
+	// 确定使用的 User-Agent（为空时使用默认值）
+	ua := strings.TrimSpace(cfg.UserAgent)
+	if ua == "" {
+		ua = defaultUserAgent
+	}
+
 	// 创建 launcher
 	l := launcher.New().
 		Headless(cfg.Headless).
 		Set("no-sandbox").
-		Set("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+		Set("user-agent", ua)
 
 	// 设置浏览器路径
 	if cfg.BinPath != "" {

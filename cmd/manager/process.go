@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -145,6 +146,9 @@ func (pm *ProcessManager) StartUser(ctx context.Context, params StartUserParams)
 	}
 	if params.User.Proxy != "" {
 		args = append(args, "-proxy="+params.User.Proxy)
+	}
+	if ua := strings.TrimSpace(params.User.UserAgent); ua != "" {
+		args = append(args, "-user-agent="+ua)
 	}
 
 	cmd := exec.Command(params.BinPath, args...)
