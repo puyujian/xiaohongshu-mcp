@@ -91,6 +91,7 @@
             <th>用户</th>
             <th>端口</th>
             <th>代理</th>
+            <th>User-Agent</th>
             <th>状态</th>
             <th>链接</th>
             <th>路径</th>
@@ -1358,11 +1359,18 @@
           : `<button data-act="start" data-id="${esc(u.id)}">启动</button>`;
         const dis = u.running ? 'disabled' : '';
         const url = u.url ? `<a class="link" href="${esc(u.url)}" target="_blank">${esc(u.url)}</a>` : '-';
+        // UA 显示：截断过长的 UA
+        const uaFull = u.user_agent || '(未设置)';
+        const uaShort = uaFull.length > 50 ? uaFull.substring(0, 50) + '...' : uaFull;
+        const uaDisplay = uaFull === '(未设置)'
+          ? `<span style="color:#fbbf24;">${esc(uaShort)}</span>`
+          : `<span title="${esc(uaFull)}">${esc(uaShort)}</span>`;
         return `
           <tr>
             <td><b>${esc(u.id)}</b>${u.last_error ? `<div class="muted">last_error: ${esc(u.last_error)}</div>` : ''}</td>
             <td>${esc(u.port)}</td>
             <td class="muted">${esc(u.proxy || '')}</td>
+            <td class="muted" style="max-width:180px; word-break:break-all; font-size:11px;">${uaDisplay}</td>
             <td>${badge}${u.started_at ? `<div class="muted">started_at: ${esc(u.started_at)}</div>` : ''}</td>
             <td class="muted">${url}<div class="muted">/mcp /api/v1 /health</div></td>
             <td class="muted">
@@ -1370,9 +1378,10 @@
               profile: ${esc(u.user_data_dir)}<br/>
               log: ${esc(u.log_file)}
             </td>
-            <td class="row" style="gap:8px;">
+            <td class="row" style="gap:8px; flex-wrap:wrap;">
               ${ops}
               <button data-act="debug" data-id="${esc(u.id)}" class="primary">调试</button>
+              <button data-act="reset-ua" data-id="${esc(u.id)}" ${dis} title="重新生成随机 UA">重置UA</button>
               <button data-act="edit" data-id="${esc(u.id)}" ${dis}>编辑</button>
               <button data-act="del" data-id="${esc(u.id)}" ${dis}>删除</button>
             </td>
@@ -1394,6 +1403,11 @@
         if (act === 'del') {
           if (!confirm(`确认删除用户 ${id}？`)) return;
           await api('DELETE', `/users/${encodeURIComponent(id)}`);
+        }
+        if (act === 'reset-ua') {
+          if (!confirm(`确认重置用户 ${id} 的 User-Agent？\n将生成新的随机 UA，下次启动生效。`)) return;
+          const resp = await api('POST', `/users/${encodeURIComponent(id)}/reset-ua`);
+          alert(`${resp.message}\n\n新 UA:\n${resp.user_agent}`);
         }
         if (act === 'edit') {
           const data = await api('GET', '/users');

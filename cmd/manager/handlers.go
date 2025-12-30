@@ -39,6 +39,7 @@ type userView struct {
 	ID        string `json:"id"`
 	Port      int    `json:"port"`
 	Proxy     string `json:"proxy"`
+	UserAgent string `json:"user_agent"`
 	AutoStart bool   `json:"auto_start"`
 
 	URL string `json:"url"`
@@ -80,6 +81,7 @@ func (a *App) ListUsers(c *gin.Context) {
 			ID:          u.ID,
 			Port:        u.Port,
 			Proxy:       u.Proxy,
+			UserAgent:   u.UserAgent,
 			AutoStart:   u.AutoStart,
 			URL:         fmt.Sprintf("http://127.0.0.1:%d", u.Port),
 			CookiesPath: derived.CookiesPath,
@@ -472,5 +474,39 @@ func (a *App) BatchStopUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"summary": gin.H{"requested": len(ids), "stopped": stoppedCount},
 		"results": out,
+	})
+}
+
+// ResetUserAgent 重置用户的 User-Agent
+// POST /api/admin/v1/users/:id/reset-ua
+func (a *App) ResetUserAgent(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+
+	// 检查用户是否存在
+	if _, ok := a.store.GetUser(id); !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	// 检查进程是否运行中
+	if st := a.proc.GetStatus(id); st.Running {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户进程运行中，请先停止再重置 UA"})
+		return
+	}
+
+	// 重置 UA
+	newUA, err := a.store.ResetUserAgent(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "User-Agent 已重置",
+		"user_agent": newUA,
 	})
 }

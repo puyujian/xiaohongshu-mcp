@@ -257,6 +257,27 @@ func (s *Store) SetUserAutoStart(id string, autoStart bool) error {
 	return fmt.Errorf("用户不存在: %s", id)
 }
 
+// ResetUserAgent 重置用户的 User-Agent（重新生成随机 UA）
+func (s *Store) ResetUserAgent(id string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if id == "" {
+		return "", fmt.Errorf("id 不能为空")
+	}
+	for i := range s.cfg.Users {
+		if s.cfg.Users[i].ID == id {
+			newUA := generateRandomUserAgent()
+			s.cfg.Users[i].UserAgent = newUA
+			if err := s.saveLocked(); err != nil {
+				return "", err
+			}
+			return newUA, nil
+		}
+	}
+	return "", fmt.Errorf("用户不存在: %s", id)
+}
+
 func (s *Store) saveLocked() error {
 	if err := validateConfig(&s.cfg); err != nil {
 		return err

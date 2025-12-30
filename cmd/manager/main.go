@@ -62,6 +62,7 @@ func main() {
 		api.DELETE("/users/:id", app.DeleteUser)
 		api.POST("/users/:id/start", app.StartUser)
 		api.POST("/users/:id/stop", app.StopUser)
+		api.POST("/users/:id/reset-ua", app.ResetUserAgent)
 
 		// 批量操作API
 		api.POST("/users/batch/start", app.BatchStartUsers)
