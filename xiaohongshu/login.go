@@ -28,7 +28,8 @@ func (a *LoginAction) CheckLoginStatus(ctx context.Context) (bool, error) {
 	}
 
 	if !exists {
-		return false, errors.Wrap(err, "login status element not found")
+		// 未登录不是错误，只是状态
+		return false, nil
 	}
 
 	return true, nil
