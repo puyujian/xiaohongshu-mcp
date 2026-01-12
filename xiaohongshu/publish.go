@@ -385,7 +385,10 @@ func inputProductSearchKeyword(input *rod.Element, keyword string) error {
 }
 
 func selectProductByKeyword(modal *rod.Element, keyword string) error {
-	lowerKeyword := strings.ToLower(keyword)
+	lowerKeyword := strings.ToLower(strings.TrimSpace(keyword))
+	if lowerKeyword == "" {
+		return errors.New("商品关键词不能为空")
+	}
 
 	// 通过 JavaScript 原子操作完成查找和勾选，避免元素引用失效
 	result, err := modal.Eval(`(keyword) => {
@@ -395,8 +398,9 @@ func selectProductByKeyword(modal *rod.Element, keyword string) error {
 			const nameElem = card.querySelector('.sku-name');
 			if (!nameElem) continue;
 
-			const name = nameElem.textContent || '';
-			if (!name.toLowerCase().includes(keyword)) continue;
+			const name = (nameElem.textContent || '').toLowerCase();
+			const idText = (card.querySelector('.sku-id')?.textContent || '').toLowerCase();
+			if (!name.includes(keyword) && !idText.includes(keyword)) continue;
 
 			// 找到匹配的商品，检查是否已选中
 			const checkbox = card.querySelector('input[type="checkbox"]');
@@ -404,14 +408,14 @@ func selectProductByKeyword(modal *rod.Element, keyword string) error {
 				return { success: true, alreadyChecked: true };
 			}
 
-			// 查找并点击复选框容器
-			const checkboxContainer = card.querySelector('.d-checkbox');
-			if (!checkboxContainer) {
-				return { success: false, error: '未找到复选框容器' };
-			}
+				// 查找并点击复选框容器（优先点击可交互区域）
+				const checkboxContainer = card.querySelector('.d-checkbox-main') || card.querySelector('.d-checkbox');
+				if (!checkboxContainer) {
+					return { success: false, error: '未找到复选框容器' };
+				}
 
-			checkboxContainer.click();
-			return { success: true, alreadyChecked: false };
+				checkboxContainer.click();
+				return { success: true, alreadyChecked: false };
 		}
 
 		return { success: false, error: '未找到匹配商品' };
@@ -438,10 +442,59 @@ func selectProductByKeyword(modal *rod.Element, keyword string) error {
 		return nil
 	}
 
-	// 等待勾选状态生效
-	time.Sleep(300 * time.Millisecond)
+	// 等待勾选状态生效并做校验，避免“点击了但没选上”导致后续保存/发布失败
+	if err := waitForProductChecked(modal, lowerKeyword, 2*time.Second); err != nil {
+		return errors.Wrap(err, "勾选状态未生效")
+	}
 
 	return nil
+}
+
+func waitForProductChecked(modal *rod.Element, lowerKeyword string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		found, checked, err := getProductCheckedState(modal, lowerKeyword)
+		if err == nil && found && checked {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	found, checked, err := getProductCheckedState(modal, lowerKeyword)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("未找到匹配商品卡片")
+	}
+	if checked {
+		return nil
+	}
+	return errors.New("复选框仍未处于选中状态")
+}
+
+func getProductCheckedState(modal *rod.Element, lowerKeyword string) (found bool, checked bool, err error) {
+	result, err := modal.Eval(`(keyword) => {
+		const cards = this.querySelectorAll('.good-card-container');
+		for (let card of cards) {
+			const nameElem = card.querySelector('.sku-name');
+			if (!nameElem) continue;
+
+			const name = (nameElem.textContent || '').toLowerCase();
+			const idText = (card.querySelector('.sku-id')?.textContent || '').toLowerCase();
+			if (!name.includes(keyword) && !idText.includes(keyword)) continue;
+
+			const checkbox = card.querySelector('input[type="checkbox"]');
+			return { found: true, checked: !!(checkbox && checkbox.checked) };
+		}
+
+		return { found: false, checked: false };
+	}`, lowerKeyword)
+	if err != nil {
+		return false, false, err
+	}
+
+	return result.Value.Get("found").Bool(), result.Value.Get("checked").Bool(), nil
 }
 
 func waitForProductListLoad(modal *rod.Element) error {
