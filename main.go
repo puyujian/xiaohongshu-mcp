@@ -39,6 +39,11 @@ func main() {
 		userAgent = os.Getenv("BROWSER_USER_AGENT")
 	}
 
+	// 将代理同步到进程环境变量，确保 Go 侧网络请求与浏览器下载都能走代理。
+	if err := configs.ApplyProxyToEnv(proxy); err != nil {
+		logrus.Warnf("代理环境变量设置失败（将仅影响 Go 侧网络请求/浏览器下载）：%v", err)
+	}
+
 	// 初始化全局配置
 	configs.InitHeadless(headless)
 	configs.SetBinPath(binPath)

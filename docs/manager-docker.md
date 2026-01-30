@@ -88,7 +88,7 @@ docker run -d \
   "data_dir": "./data",
   "users": [
     {"id": "user1", "port": 18060, "proxy": ""},
-    {"id": "user2", "port": 18061, "proxy": "http://proxy:8080"}
+    {"id": "user2", "port": 18061, "proxy": "http://user:pass@proxy.example.com:8080"}
   ]
 }
 ```

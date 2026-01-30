@@ -22,10 +22,20 @@ type PublishVideoContent struct {
 }
 
 // NewPublishVideoAction 进入发布页并切换到“上传视频”
-func NewPublishVideoAction(page *rod.Page) (*PublishAction, error) {
+func NewPublishVideoAction(page *rod.Page) (action *PublishAction, err error) {
+	defer recoverRodPanicAsError(nil, &err)
+
 	pp := page.Timeout(300 * time.Second)
 
-	pp.MustNavigate(urlOfPublic).MustWaitIdle().MustWaitDOMStable()
+	if err = navigateWithRetry(pp, urlOfPublic, 3); err != nil {
+		return nil, err
+	}
+	if err = pp.WaitIdle(time.Minute); err != nil {
+		return nil, err
+	}
+	if err = pp.WaitDOMStable(time.Second, 0); err != nil {
+		return nil, err
+	}
 	time.Sleep(1 * time.Second)
 
 	if err := mustClickPublishTab(page, "上传视频"); err != nil {
@@ -38,7 +48,9 @@ func NewPublishVideoAction(page *rod.Page) (*PublishAction, error) {
 }
 
 // PublishVideo 上传视频并提交
-func (p *PublishAction) PublishVideo(ctx context.Context, content PublishVideoContent) error {
+func (p *PublishAction) PublishVideo(ctx context.Context, content PublishVideoContent) (err error) {
+	defer recoverRodPanicAsError(ctx, &err)
+
 	if content.VideoPath == "" {
 		return errors.New("视频不能为空")
 	}

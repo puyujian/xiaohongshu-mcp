@@ -76,7 +76,9 @@ func (f *FeedDetailAction) GetFeedDetail(ctx context.Context, feedID, xsecToken 
 	return f.GetFeedDetailWithConfig(ctx, feedID, xsecToken, loadAllComments, config)
 }
 
-func (f *FeedDetailAction) GetFeedDetailWithConfig(ctx context.Context, feedID, xsecToken string, loadAllComments bool, config CommentLoadConfig) (*FeedDetailResponse, error) {
+func (f *FeedDetailAction) GetFeedDetailWithConfig(ctx context.Context, feedID, xsecToken string, loadAllComments bool, config CommentLoadConfig) (resp *FeedDetailResponse, err error) {
+	defer recoverRodPanicAsError(ctx, &err)
+
 	page := f.page.Context(ctx).Timeout(10 * time.Minute)
 	url := makeFeedDetailURL(feedID, xsecToken)
 
@@ -85,10 +87,14 @@ func (f *FeedDetailAction) GetFeedDetailWithConfig(ctx context.Context, feedID, 
 		config.ClickMoreReplies, config.MaxRepliesThreshold, config.MaxCommentItems, config.ScrollSpeed)
 
 	// 使用retry-go处理页面导航和DOM稳定等待
-	err := retry.Do(
+	err = retry.Do(
 		func() error {
-			page.MustNavigate(url)
-			page.MustWaitDOMStable()
+			if err := page.Navigate(url); err != nil {
+				return err
+			}
+			if err := page.WaitDOMStable(time.Second, 0); err != nil {
+				return err
+			}
 			return nil
 		},
 		retry.Attempts(3),

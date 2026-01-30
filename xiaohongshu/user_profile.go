@@ -19,21 +19,29 @@ func NewUserProfileAction(page *rod.Page) *UserProfileAction {
 }
 
 // UserProfile 获取用户基本信息及帖子
-func (u *UserProfileAction) UserProfile(ctx context.Context, userID, xsecToken string) (*UserProfileResponse, error) {
+func (u *UserProfileAction) UserProfile(ctx context.Context, userID, xsecToken string) (resp *UserProfileResponse, err error) {
+	defer recoverRodPanicAsError(ctx, &err)
+
 	page := u.page.Context(ctx)
 
 	searchURL := makeUserProfileURL(userID, xsecToken)
-	page.MustNavigate(searchURL)
-	page.MustWaitStable()
+	if err = navigateWithRetry(page, searchURL, 3); err != nil {
+		return nil, err
+	}
+	if err = page.WaitStable(time.Second); err != nil {
+		return nil, err
+	}
 
 	return u.extractUserProfileData(page)
 }
 
 // extractUserProfileData 从页面中提取用户资料数据的通用方法
 func (u *UserProfileAction) extractUserProfileData(page *rod.Page) (*UserProfileResponse, error) {
-	page.MustWait(`() => window.__INITIAL_STATE__ !== undefined`)
+	if err := page.Wait(rod.Eval(`() => window.__INITIAL_STATE__ !== undefined`)); err != nil {
+		return nil, err
+	}
 
-	userDataResult := page.MustEval(`() => {
+	evalUserData, err := page.Eval(`() => {
 		if (window.__INITIAL_STATE__ &&
 		    window.__INITIAL_STATE__.user &&
 		    window.__INITIAL_STATE__.user.userPageData) {
@@ -44,14 +52,18 @@ func (u *UserProfileAction) extractUserProfileData(page *rod.Page) (*UserProfile
 			}
 		}
 		return "";
-	}`).String()
+	}`)
+	if err != nil {
+		return nil, err
+	}
+	userDataResult := evalUserData.Value.String()
 
 	if userDataResult == "" {
 		return nil, fmt.Errorf("user.userPageData.value not found in __INITIAL_STATE__")
 	}
 
 	// 2. 获取用户帖子：window.__INITIAL_STATE__.user.notes.value
-	notesResult := page.MustEval(`() => {
+	evalNotes, err := page.Eval(`() => {
 		if (window.__INITIAL_STATE__ &&
 		    window.__INITIAL_STATE__.user &&
 		    window.__INITIAL_STATE__.user.notes) {
@@ -63,7 +75,11 @@ func (u *UserProfileAction) extractUserProfileData(page *rod.Page) (*UserProfile
 			}
 		}
 		return "";
-	}`).String()
+	}`)
+	if err != nil {
+		return nil, err
+	}
+	notesResult := evalNotes.Value.String()
 
 	if notesResult == "" {
 		return nil, fmt.Errorf("user.notes.value not found in __INITIAL_STATE__")
@@ -104,7 +120,9 @@ func makeUserProfileURL(userID, xsecToken string) string {
 	return fmt.Sprintf("https://www.xiaohongshu.com/user/profile/%s?xsec_token=%s&xsec_source=pc_note", userID, xsecToken)
 }
 
-func (u *UserProfileAction) GetMyProfileViaSidebar(ctx context.Context) (*UserProfileResponse, error) {
+func (u *UserProfileAction) GetMyProfileViaSidebar(ctx context.Context) (resp *UserProfileResponse, err error) {
+	defer recoverRodPanicAsError(ctx, &err)
+
 	page := u.page.Context(ctx)
 
 	// 创建导航动作
@@ -116,7 +134,9 @@ func (u *UserProfileAction) GetMyProfileViaSidebar(ctx context.Context) (*UserPr
 	}
 
 	// 等待页面加载完成并获取 __INITIAL_STATE__
-	page.MustWaitStable()
+	if err = page.WaitStable(time.Second); err != nil {
+		return nil, err
+	}
 
 	return u.extractUserProfileData(page)
 }

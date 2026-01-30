@@ -29,8 +29,12 @@ func (f *CommentFeedAction) PostComment(ctx context.Context, feedID, xsecToken, 
 	logrus.Infof("打开 feed 详情页: %s", url)
 
 	// 导航到详情页
-	page.MustNavigate(url)
-	page.MustWaitDOMStable()
+	if err := navigateWithRetry(page, url, 3); err != nil {
+		return err
+	}
+	if err := page.WaitDOMStable(time.Second, 0); err != nil {
+		return err
+	}
 	time.Sleep(1 * time.Second)
 
 	// 检测页面是否可访问
@@ -88,8 +92,12 @@ func (f *CommentFeedAction) ReplyToComment(ctx context.Context, feedID, xsecToke
 	logrus.Infof("打开 feed 详情页进行回复: %s", url)
 
 	// 导航到详情页
-	page.MustNavigate(url)
-	page.MustWaitDOMStable()
+	if err := navigateWithRetry(page, url, 3); err != nil {
+		return err
+	}
+	if err := page.WaitDOMStable(time.Second, 0); err != nil {
+		return err
+	}
 	time.Sleep(1 * time.Second)
 
 	// 检测页面是否可访问
@@ -108,7 +116,9 @@ func (f *CommentFeedAction) ReplyToComment(ctx context.Context, feedID, xsecToke
 
 	// 滚动到评论位置
 	logrus.Info("滚动到评论位置...")
-	commentEl.MustScrollIntoView()
+	if err := commentEl.ScrollIntoView(); err != nil {
+		return fmt.Errorf("scroll into view failed: %w", err)
+	}
 	time.Sleep(1 * time.Second)
 
 	logrus.Info("准备点击回复按钮")

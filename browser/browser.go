@@ -3,6 +3,8 @@ package browser
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,8 +24,14 @@ const defaultUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleW
 
 // Browser 浏览器实例
 type Browser struct {
-	browser  *rod.Browser
-	launcher *launcher.Launcher
+	browser   *rod.Browser
+	launcher  *launcher.Launcher
+	proxyAuth *proxyAuth
+}
+
+type proxyAuth struct {
+	Username string
+	Password string
 }
 
 // Config 浏览器配置
@@ -91,9 +99,21 @@ func NewBrowser(headless bool, options ...Option) (*Browser, error) {
 	}
 
 	// 设置代理
+	var proxyAuthCfg *proxyAuth
 	if cfg.Proxy != "" {
-		l = l.Set("proxy-server", cfg.Proxy)
-		logrus.Debugf("browser proxy: %s", cfg.Proxy)
+		normalizedProxy, err := normalizeProxy(cfg.Proxy)
+		if err != nil {
+			return nil, err
+		}
+		auth, err := parseProxyAuth(cfg.Proxy)
+		if err != nil {
+			return nil, err
+		}
+		proxyAuthCfg = auth
+		if normalizedProxy != "" {
+			l = l.Set("proxy-server", normalizedProxy)
+			logrus.Debugf("browser proxy: %s", sanitizeProxyForLog(normalizedProxy))
+		}
 	}
 
 	// 设置用户数据目录（多用户隔离关键）
@@ -112,6 +132,11 @@ func NewBrowser(headless bool, options ...Option) (*Browser, error) {
 	b := rod.New().ControlURL(url)
 	if err := b.Connect(); err != nil {
 		return nil, fmt.Errorf("failed to connect browser: %w", err)
+	}
+
+	if proxyAuthCfg != nil && proxyAuthCfg.Username != "" {
+		logrus.Debugf("browser proxy auth enabled")
+		startProxyAuth(b, proxyAuthCfg.Username, proxyAuthCfg.Password)
 	}
 
 	// 加载 cookies
@@ -133,9 +158,223 @@ func NewBrowser(headless bool, options ...Option) (*Browser, error) {
 	}
 
 	return &Browser{
-		browser:  b,
-		launcher: l,
+		browser:   b,
+		launcher:  l,
+		proxyAuth: proxyAuthCfg,
 	}, nil
+}
+
+func startProxyAuth(b *rod.Browser, username, password string) {
+	if b == nil {
+		return
+	}
+
+	ch := b.Event()
+	go runProxyAuthLoop(b, ch, username, password)
+}
+
+func runProxyAuthLoop(b *rod.Browser, ch <-chan *rod.Message, username, password string) {
+	for msg := range ch {
+		// 认证与继续请求必须在触发该事件的 target session 上执行，否则不会生效。
+		caller := b.PageFromSession(msg.SessionID)
+		switch msg.Method {
+		case proto.FetchRequestPaused{}.ProtoEvent():
+			var e proto.FetchRequestPaused
+			if !msg.Load(&e) {
+				continue
+			}
+			_ = proto.FetchContinueRequest{RequestID: e.RequestID}.Call(caller)
+		case proto.FetchAuthRequired{}.ProtoEvent():
+			var e proto.FetchAuthRequired
+			if !msg.Load(&e) {
+				continue
+			}
+			if e.AuthChallenge != nil && e.AuthChallenge.Source == proto.FetchAuthChallengeSourceProxy {
+				_ = proto.FetchContinueWithAuth{
+					RequestID: e.RequestID,
+					AuthChallengeResponse: &proto.FetchAuthChallengeResponse{
+						Response: proto.FetchAuthChallengeResponseResponseProvideCredentials,
+						Username: username,
+						Password: password,
+					},
+				}.Call(caller)
+			} else {
+				_ = proto.FetchContinueWithAuth{
+					RequestID: e.RequestID,
+					AuthChallengeResponse: &proto.FetchAuthChallengeResponse{
+						Response: proto.FetchAuthChallengeResponseResponseCancelAuth,
+					},
+				}.Call(caller)
+			}
+		}
+	}
+}
+
+func normalizeProxy(raw string) (string, error) {
+	proxy := strings.TrimSpace(raw)
+	if proxy == "" {
+		return "", nil
+	}
+
+	// 高级用法：允许直接透传 Chrome 原生 proxy 字符串（如包含 http=...;https=...）
+	if !strings.Contains(proxy, "://") && strings.ContainsAny(proxy, "=;") {
+		return proxy, nil
+	}
+
+	// URL 格式（带 scheme）
+	if strings.Contains(proxy, "://") {
+		u, err := url.Parse(proxy)
+		if err != nil {
+			return "", fmt.Errorf("代理地址解析失败（%s）: %w", sanitizeProxyForLog(raw), err)
+		}
+
+		scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
+		host := strings.TrimSpace(u.Host)
+		if host == "" {
+			// 兜底处理：某些异常输入会落到 Opaque
+			host = strings.TrimSpace(u.Opaque)
+		}
+		if host == "" {
+			return "", fmt.Errorf("代理地址缺少 host:port（%s）", sanitizeProxyForLog(raw))
+		}
+		if err := validateHostPort(host); err != nil {
+			return "", fmt.Errorf("代理地址 host:port 不合法（%s）: %w", sanitizeProxyForLog(raw), err)
+		}
+
+		// Chrome 的 --proxy-server 对 HTTP 代理使用 host:port 更兼容（避免不同版本对 scheme 的差异）
+		switch scheme {
+		case "http", "https":
+			return host, nil
+		case "socks5", "socks5h", "socks":
+			return "socks5://" + host, nil
+		case "socks4", "socks4a":
+			return "socks4://" + host, nil
+		default:
+			return "", fmt.Errorf("不支持的代理协议（%s）: %s；请使用 http://host:port、socks5://host:port 或直接填写 host:port", sanitizeProxyForLog(raw), scheme)
+		}
+	}
+
+	// 无 scheme：可能是 host:port 或 user:pass@host:port
+	if strings.Contains(proxy, "@") {
+		u, err := url.Parse("http://" + proxy)
+		if err != nil {
+			return "", fmt.Errorf("代理地址解析失败（%s）: %w", sanitizeProxyForLog(raw), err)
+		}
+		host := strings.TrimSpace(u.Host)
+		if host == "" {
+			return "", fmt.Errorf("代理地址缺少 host:port（%s）", sanitizeProxyForLog(raw))
+		}
+		if err := validateHostPort(host); err != nil {
+			return "", fmt.Errorf("代理地址 host:port 不合法（%s）: %w", sanitizeProxyForLog(raw), err)
+		}
+		return host, nil
+	}
+
+	// 普通 host:port
+	if err := validateHostPort(proxy); err != nil {
+		return "", fmt.Errorf("代理地址格式不正确（%s）：请使用 http://127.0.0.1:7890 或 127.0.0.1:7890（IPv6 请用 [::1]:7890）", sanitizeProxyForLog(raw))
+	}
+	return proxy, nil
+}
+
+func parseProxyAuth(raw string) (*proxyAuth, error) {
+	proxy := strings.TrimSpace(raw)
+	if proxy == "" {
+		return nil, nil
+	}
+
+	// 高级用法（如 http=...;https=...）不解析认证信息
+	if !strings.Contains(proxy, "://") && strings.ContainsAny(proxy, "=;") {
+		return nil, nil
+	}
+
+	// URL 格式（带 scheme）
+	if strings.Contains(proxy, "://") {
+		u, err := url.Parse(proxy)
+		if err != nil {
+			return nil, fmt.Errorf("代理地址解析失败（%s）: %w", sanitizeProxyForLog(raw), err)
+		}
+		scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
+		if scheme != "http" && scheme != "https" {
+			return nil, nil
+		}
+		if u.User == nil {
+			return nil, nil
+		}
+		username := u.User.Username()
+		password, _ := u.User.Password()
+		if username == "" {
+			return nil, nil
+		}
+		return &proxyAuth{Username: username, Password: password}, nil
+	}
+
+	// 无 scheme：可能是 user:pass@host:port
+	if strings.Contains(proxy, "@") {
+		u, err := url.Parse("http://" + proxy)
+		if err != nil {
+			return nil, fmt.Errorf("代理地址解析失败（%s）: %w", sanitizeProxyForLog(raw), err)
+		}
+		if u.User == nil {
+			return nil, nil
+		}
+		username := u.User.Username()
+		password, _ := u.User.Password()
+		if username == "" {
+			return nil, nil
+		}
+		return &proxyAuth{Username: username, Password: password}, nil
+	}
+
+	return nil, nil
+}
+
+func validateHostPort(hostport string) error {
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(host) == "" {
+		return fmt.Errorf("host 不能为空")
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil || p <= 0 || p > 65535 {
+		return fmt.Errorf("port 非法: %s", port)
+	}
+	return nil
+}
+
+func sanitizeProxyForLog(raw string) string {
+	p := strings.TrimSpace(raw)
+	if p == "" {
+		return ""
+	}
+	// 优先按 URL 解析，便于脱敏 userinfo
+	if strings.Contains(p, "://") {
+		if u, err := url.Parse(p); err == nil {
+			host := strings.TrimSpace(u.Host)
+			if host == "" {
+				host = strings.TrimSpace(u.Opaque)
+			}
+			if host == "" {
+				return "***"
+			}
+			scheme := strings.TrimSpace(u.Scheme)
+			if scheme == "" {
+				return host
+			}
+			if u.User != nil {
+				return scheme + "://***@" + host
+			}
+			return scheme + "://" + host
+		}
+	}
+
+	// 无 scheme：简单按 @ 脱敏
+	if idx := strings.LastIndex(p, "@"); idx >= 0 {
+		return "***@" + p[idx+1:]
+	}
+	return p
 }
 
 // Close 关闭浏览器
@@ -146,7 +385,12 @@ func (b *Browser) Close() {
 
 // NewPage 创建新页面（带 stealth 模式）
 func (b *Browser) NewPage() *rod.Page {
-	return stealth.MustPage(b.browser)
+	page := stealth.MustPage(b.browser)
+	if b != nil && b.proxyAuth != nil && strings.TrimSpace(b.proxyAuth.Username) != "" {
+		// 仅在需要代理认证时启用 Fetch 拦截，否则会带来额外开销。
+		b.browser.EnableDomain(page.SessionID, &proto.FetchEnable{HandleAuthRequests: true})
+	}
+	return page
 }
 
 // cleanupChromeLocks 清理 Chrome 的所有锁文件

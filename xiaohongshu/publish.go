@@ -32,11 +32,20 @@ const (
 	urlOfPublic = `https://creator.xiaohongshu.com/publish/publish?source=official`
 )
 
-func NewPublishImageAction(page *rod.Page) (*PublishAction, error) {
+func NewPublishImageAction(page *rod.Page) (action *PublishAction, err error) {
+	defer recoverRodPanicAsError(nil, &err)
 
 	pp := page.Timeout(300 * time.Second)
 
-	pp.MustNavigate(urlOfPublic).MustWaitIdle().MustWaitDOMStable()
+	if err = navigateWithRetry(pp, urlOfPublic, 3); err != nil {
+		return nil, err
+	}
+	if err = pp.WaitIdle(time.Minute); err != nil {
+		return nil, err
+	}
+	if err = pp.WaitDOMStable(time.Second, 0); err != nil {
+		return nil, err
+	}
 	time.Sleep(1 * time.Second)
 
 	if err := mustClickPublishTab(page, "上传图文"); err != nil {
@@ -51,7 +60,9 @@ func NewPublishImageAction(page *rod.Page) (*PublishAction, error) {
 	}, nil
 }
 
-func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent) error {
+func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent) (err error) {
+	defer recoverRodPanicAsError(ctx, &err)
+
 	if len(content.ImagePaths) == 0 {
 		return errors.New("图片不能为空")
 	}
@@ -390,7 +401,47 @@ func selectProductByKeyword(modal *rod.Element, keyword string) error {
 		return errors.New("商品关键词不能为空")
 	}
 
-	// 通过 JavaScript 原子操作完成查找和勾选，避免元素引用失效
+	const maxRetries = 5
+	const retryInterval = 500 * time.Millisecond
+
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		success, alreadyChecked, err := trySelectProduct(modal, lowerKeyword)
+		if err != nil {
+			lastErr = err
+			logrus.Debugf("选择商品第%d次尝试失败: %s, error: %v", attempt, keyword, err)
+			if attempt < maxRetries {
+				time.Sleep(retryInterval)
+			}
+			continue
+		}
+
+		if success {
+			if alreadyChecked {
+				logrus.Debugf("商品已选中: %s", keyword)
+				return nil
+			}
+
+			// 等待勾选状态生效并做校验
+			if err := waitForProductChecked(modal, lowerKeyword, 2*time.Second); err != nil {
+				lastErr = errors.Wrap(err, "勾选状态未生效")
+				logrus.Debugf("选择商品第%d次尝试勾选状态未生效: %s", attempt, keyword)
+				if attempt < maxRetries {
+					time.Sleep(retryInterval)
+				}
+				continue
+			}
+			return nil
+		}
+	}
+
+	if lastErr != nil {
+		return errors.Wrapf(lastErr, "重试%d次后仍失败", maxRetries)
+	}
+	return errors.Errorf("重试%d次后未找到匹配商品: %s", maxRetries, keyword)
+}
+
+func trySelectProduct(modal *rod.Element, lowerKeyword string) (success bool, alreadyChecked bool, err error) {
 	result, err := modal.Eval(`(keyword) => {
 		const cards = this.querySelectorAll('.good-card-container');
 
@@ -422,32 +473,19 @@ func selectProductByKeyword(modal *rod.Element, keyword string) error {
 	}`, lowerKeyword)
 
 	if err != nil {
-		return errors.Wrap(err, "执行选择脚本失败")
+		return false, false, errors.Wrap(err, "执行选择脚本失败")
 	}
 
-	// 获取返回的对象
-	success := result.Value.Get("success").Bool()
-
-	if !success {
+	successVal := result.Value.Get("success").Bool()
+	if !successVal {
 		errorMsg := result.Value.Get("error").Str()
 		if errorMsg == "" {
 			errorMsg = "未知错误"
 		}
-		return errors.New(errorMsg)
+		return false, false, errors.New(errorMsg)
 	}
 
-	alreadyChecked := result.Value.Get("alreadyChecked").Bool()
-	if alreadyChecked {
-		logrus.Debugf("商品已选中: %s", keyword)
-		return nil
-	}
-
-	// 等待勾选状态生效并做校验，避免“点击了但没选上”导致后续保存/发布失败
-	if err := waitForProductChecked(modal, lowerKeyword, 2*time.Second); err != nil {
-		return errors.Wrap(err, "勾选状态未生效")
-	}
-
-	return nil
+	return true, result.Value.Get("alreadyChecked").Bool(), nil
 }
 
 func waitForProductChecked(modal *rod.Element, lowerKeyword string, timeout time.Duration) error {
