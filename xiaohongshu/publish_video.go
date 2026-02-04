@@ -109,7 +109,7 @@ func waitForPublishButtonClickable(page *rod.Page) (*rod.Element, error) {
 	maxWait := 10 * time.Minute
 	interval := 1 * time.Second
 	start := time.Now()
-	selector := "button.publishBtn"
+	selector := ".publish-page-publish-btn button.bg-red"
 
 	slog.Info("开始等待发布按钮可点击(视频)")
 

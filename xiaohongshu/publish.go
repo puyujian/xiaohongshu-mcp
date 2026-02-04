@@ -275,7 +275,7 @@ func submitPublish(page *rod.Page, title, content string, tags []string) error {
 
 	time.Sleep(1 * time.Second)
 
-	submitButton := page.MustElement("div.submit div.d-button-content")
+	submitButton := page.MustElement(".publish-page-publish-btn button.bg-red")
 	submitButton.MustClick()
 
 	time.Sleep(3 * time.Second)
