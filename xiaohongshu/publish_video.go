@@ -10,6 +10,7 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/pkg/errors"
+	"github.com/xpzouying/xiaohongshu-mcp/pkg/flowdebug"
 )
 
 // PublishVideoContent 发布视频内容
@@ -51,32 +52,54 @@ func NewPublishVideoAction(page *rod.Page) (action *PublishAction, err error) {
 func (p *PublishAction) PublishVideo(ctx context.Context, content PublishVideoContent) (err error) {
 	defer recoverRodPanicAsError(ctx, &err)
 
+	dbg := flowdebug.FromContext(ctx)
+	if dbg != nil {
+		dbg.Step("开始发布视频", map[string]any{
+			"tags":     len(content.Tags),
+			"products": len(content.Products),
+		})
+		_ = dbg.WaitIfPaused(ctx)
+	}
+
 	if content.VideoPath == "" {
 		return errors.New("视频不能为空")
 	}
 
 	page := p.page.Context(ctx)
 
-	if err := uploadVideo(page, content.VideoPath); err != nil {
+	if dbg != nil {
+		dbg.Step("上传视频", nil)
+		_ = dbg.WaitIfPaused(ctx)
+	}
+	if err := uploadVideo(ctx, page, content.VideoPath); err != nil {
 		return errors.Wrap(err, "小红书上传视频失败")
 	}
 
 	// 添加商品（如果有）
 	if len(content.Products) > 0 {
-		if err := addProducts(page, content.Products); err != nil {
+		if dbg != nil {
+			dbg.Step("选择商品", map[string]any{"count": len(content.Products)})
+			_ = dbg.WaitIfPaused(ctx)
+		}
+		if err := addProducts(ctx, page, content.Products); err != nil {
 			return errors.Wrap(err, "选择商品失败")
 		}
 	}
 
-	if err := submitPublishVideo(page, content.Title, content.Content, content.Tags); err != nil {
+	if dbg != nil {
+		dbg.Step("填写并提交发布", map[string]any{"tags": len(content.Tags)})
+		_ = dbg.WaitIfPaused(ctx)
+	}
+	if err := submitPublishVideo(ctx, page, content.Title, content.Content, content.Tags); err != nil {
 		return errors.Wrap(err, "小红书发布失败")
 	}
 	return nil
 }
 
 // uploadVideo 上传单个本地视频
-func uploadVideo(page *rod.Page, videoPath string) error {
+func uploadVideo(ctx context.Context, page *rod.Page, videoPath string) error {
 	pp := page.Timeout(5 * time.Minute) // 视频处理耗时更长
+	dbg := flowdebug.FromContext(ctx)
 
 	if _, err := os.Stat(videoPath); os.IsNotExist(err) {
 		return errors.Wrapf(err, "视频文件不存在: %s", videoPath)
@@ -96,7 +119,10 @@ func uploadVideo(page *rod.Page, videoPath string) error {
 	fileInput.MustSetFiles(videoPath)
 
 	// 对于视频，等待发布按钮变为可点击即表示处理完成
-	btn, err := waitForPublishButtonClickable(pp)
+	if dbg != nil {
+		dbg.Step("等待视频处理完成(发布按钮可点击)", nil)
+	}
+	btn, err := waitForPublishButtonClickable(ctx, pp)
 	if err != nil {
 		return err
 	}
@@ -105,15 +131,19 @@ func uploadVideo(page *rod.Page, videoPath string) error {
 }
 
 // waitForPublishButtonClickable 等待发布按钮可点击
-func waitForPublishButtonClickable(page *rod.Page) (*rod.Element, error) {
+func waitForPublishButtonClickable(ctx context.Context, page *rod.Page) (*rod.Element, error) {
 	maxWait := 10 * time.Minute
 	interval := 1 * time.Second
 	start := time.Now()
 	selector := ".publish-page-publish-btn button.bg-red"
+	dbg := flowdebug.FromContext(ctx)
 
 	slog.Info("开始等待发布按钮可点击(视频)")
 
 	for time.Since(start) < maxWait {
+		if dbg != nil {
+			_ = dbg.WaitIfPaused(ctx)
+		}
 		btn, err := page.Element(selector)
 		if err == nil && btn != nil {
 			// 可见性
@@ -136,13 +166,26 @@ func waitForPublishButtonClickable(page *rod.Page) (*rod.Element, error) {
 }
 
 // submitPublishVideo 填写标题、正文、标签并点击发布（等待按钮可点击后再提交）
-func submitPublishVideo(page *rod.Page, title, content string, tags []string) error {
+func submitPublishVideo(ctx context.Context, page *rod.Page, title, content string, tags []string) error {
+	dbg := flowdebug.FromContext(ctx)
+
 	// 标题
+	if dbg != nil {
+		dbg.Step("填写标题", map[string]any{"title_len": len(strings.TrimSpace(title))})
+		_ = dbg.WaitIfPaused(ctx)
+	}
 	titleElem := page.MustElement("div.d-input input")
 	titleElem.MustInput(title)
 	time.Sleep(1 * time.Second)
 
 	// 正文 + 标签
+	if dbg != nil {
+		dbg.Step("填写正文/标签", map[string]any{
+			"content_len": len(strings.TrimSpace(content)),
+			"tags":        len(tags),
+		})
+		_ = dbg.WaitIfPaused(ctx)
+	}
 	if contentElem, ok := getContentElement(page); ok {
 		contentElem.MustInput(content)
 		inputTags(contentElem, tags)
@@ -153,12 +196,16 @@ func submitPublishVideo(page *rod.Page, title, content string, tags []string) er
 	time.Sleep(1 * time.Second)
 
 	// 等待发布按钮可点击
-	btn, err := waitForPublishButtonClickable(page)
+	btn, err := waitForPublishButtonClickable(ctx, page)
 	if err != nil {
 		return err
 	}
 
 	// 点击发布
+	if dbg != nil {
+		dbg.Step("点击发布按钮", nil)
+		_ = dbg.WaitIfPaused(ctx)
+	}
 	if err := btn.Click(proto.InputMouseButtonLeft, 1); err != nil {
 		return errors.Wrap(err, "点击发布按钮失败")
 	}

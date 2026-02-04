@@ -36,7 +36,10 @@ RUN apt-get update && apt-get install -y ca-certificates wget gnupg && \
 # go-rod 会在首次运行时自动从 Playwright CDN 下载 ARM64 版本的 Chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    fontconfig \
     fonts-liberation \
+    fonts-noto-cjk \
+    fonts-noto-color-emoji \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -71,6 +74,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lsb-release \
     wget \
     xdg-utils \
+    && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/app .

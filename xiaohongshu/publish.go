@@ -13,6 +13,7 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/xpzouying/xiaohongshu-mcp/pkg/flowdebug"
 )
 
 // PublishImageContent 发布图文内容
@@ -63,13 +64,27 @@ func NewPublishImageAction(page *rod.Page) (action *PublishAction, err error) {
 func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent) (err error) {
 	defer recoverRodPanicAsError(ctx, &err)
 
+	dbg := flowdebug.FromContext(ctx)
+	if dbg != nil {
+		dbg.Step("开始发布图文", map[string]any{
+			"images":   len(content.ImagePaths),
+			"tags":     len(content.Tags),
+			"products": len(content.Products),
+		})
+		_ = dbg.WaitIfPaused(ctx)
+	}
+
 	if len(content.ImagePaths) == 0 {
 		return errors.New("图片不能为空")
 	}
 
 	page := p.page.Context(ctx)
 
-	if err := uploadImages(page, content.ImagePaths); err != nil {
+	if dbg != nil {
+		dbg.Step("上传图片", map[string]any{"count": len(content.ImagePaths)})
+		_ = dbg.WaitIfPaused(ctx)
+	}
+	if err := uploadImages(ctx, page, content.ImagePaths); err != nil {
 		return errors.Wrap(err, "小红书上传图片失败")
 	}
 
@@ -82,12 +97,20 @@ func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent
 	logrus.Infof("发布内容: title=%s, images=%d, tags=%v, products=%d", content.Title, len(content.ImagePaths), tags, len(content.Products))
 
 	if len(content.Products) > 0 {
-		if err := addProducts(page, content.Products); err != nil {
+		if dbg != nil {
+			dbg.Step("选择商品", map[string]any{"count": len(content.Products)})
+			_ = dbg.WaitIfPaused(ctx)
+		}
+		if err := addProducts(ctx, page, content.Products); err != nil {
 			return errors.Wrap(err, "选择商品失败")
 		}
 	}
 
-	if err := submitPublish(page, content.Title, content.Content, tags); err != nil {
+	if dbg != nil {
+		dbg.Step("填写并提交发布", map[string]any{"tags": len(tags)})
+		_ = dbg.WaitIfPaused(ctx)
+	}
+	if err := submitPublish(ctx, page, content.Title, content.Content, tags); err != nil {
 		return errors.Wrap(err, "小红书发布失败")
 	}
 
@@ -201,12 +224,16 @@ func isElementBlocked(elem *rod.Element) (bool, error) {
 	return result.Value.Bool(), nil
 }
 
-func uploadImages(page *rod.Page, imagesPaths []string) error {
+func uploadImages(ctx context.Context, page *rod.Page, imagesPaths []string) error {
 	pp := page.Timeout(30 * time.Second)
+	dbg := flowdebug.FromContext(ctx)
 
 	// 验证文件路径有效性
 	validPaths := make([]string, 0, len(imagesPaths))
 	for _, path := range imagesPaths {
+		if dbg != nil {
+			_ = dbg.WaitIfPaused(ctx)
+		}
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			logrus.Warnf("图片文件不存在: %s", path)
 			continue
@@ -223,18 +250,23 @@ func uploadImages(page *rod.Page, imagesPaths []string) error {
 	uploadInput.MustSetFiles(validPaths...)
 
 	// 等待并验证上传完成
-	return waitForUploadComplete(pp, len(validPaths))
+	return waitForUploadComplete(ctx, pp, len(validPaths))
 }
 
 // waitForUploadComplete 等待并验证上传完成
-func waitForUploadComplete(page *rod.Page, expectedCount int) error {
+func waitForUploadComplete(ctx context.Context, page *rod.Page, expectedCount int) error {
 	maxWaitTime := 60 * time.Second
 	checkInterval := 500 * time.Millisecond
 	start := time.Now()
+	dbg := flowdebug.FromContext(ctx)
 
 	slog.Info("开始等待图片上传完成", "expected_count", expectedCount)
 
+	lastCount := -1
 	for time.Since(start) < maxWaitTime {
+		if dbg != nil {
+			_ = dbg.WaitIfPaused(ctx)
+		}
 		// 使用具体的pr类名检查已上传的图片
 		uploadedImages, err := page.Elements(".img-preview-area .pr")
 
@@ -242,6 +274,13 @@ func waitForUploadComplete(page *rod.Page, expectedCount int) error {
 
 		if err == nil {
 			currentCount := len(uploadedImages)
+			if dbg != nil && currentCount != lastCount {
+				lastCount = currentCount
+				dbg.Log("info", "图片上传进度", map[string]any{
+					"current":  currentCount,
+					"expected": expectedCount,
+				})
+			}
 			slog.Info("检测到已上传图片", "current_count", currentCount, "expected_count", expectedCount)
 			if currentCount >= expectedCount {
 				slog.Info("所有图片上传完成", "count", currentCount)
@@ -257,13 +296,25 @@ func waitForUploadComplete(page *rod.Page, expectedCount int) error {
 	return errors.New("上传超时，请检查网络连接和图片大小")
 }
 
-func submitPublish(page *rod.Page, title, content string, tags []string) error {
+func submitPublish(ctx context.Context, page *rod.Page, title, content string, tags []string) error {
+	dbg := flowdebug.FromContext(ctx)
 
+	if dbg != nil {
+		dbg.Step("填写标题", map[string]any{"title_len": len(strings.TrimSpace(title))})
+		_ = dbg.WaitIfPaused(ctx)
+	}
 	titleElem := page.MustElement("div.d-input input")
 	titleElem.MustInput(title)
 
 	time.Sleep(1 * time.Second)
 
+	if dbg != nil {
+		dbg.Step("填写正文/标签", map[string]any{
+			"content_len": len(strings.TrimSpace(content)),
+			"tags":        len(tags),
+		})
+		_ = dbg.WaitIfPaused(ctx)
+	}
 	if contentElem, ok := getContentElement(page); ok {
 		contentElem.MustInput(content)
 
@@ -275,6 +326,10 @@ func submitPublish(page *rod.Page, title, content string, tags []string) error {
 
 	time.Sleep(1 * time.Second)
 
+	if dbg != nil {
+		dbg.Step("点击发布按钮", nil)
+		_ = dbg.WaitIfPaused(ctx)
+	}
 	submitButton := page.MustElement(".publish-page-publish-btn button.bg-red")
 	submitButton.MustClick()
 
@@ -283,7 +338,7 @@ func submitPublish(page *rod.Page, title, content string, tags []string) error {
 	return nil
 }
 
-func addProducts(page *rod.Page, productKeywords []string) error {
+func addProducts(ctx context.Context, page *rod.Page, productKeywords []string) error {
 	keywords := make([]string, 0, len(productKeywords))
 	for _, keyword := range productKeywords {
 		trimmed := strings.TrimSpace(keyword)
@@ -327,6 +382,11 @@ func addProducts(page *rod.Page, productKeywords []string) error {
 	}
 
 	for _, keyword := range keywords {
+		dbg := flowdebug.FromContext(ctx)
+		if dbg != nil {
+			dbg.Log("info", "搜索并选择商品", map[string]any{"keyword": keyword})
+			_ = dbg.WaitIfPaused(ctx)
+		}
 		if err := inputProductSearchKeyword(searchInput, keyword); err != nil {
 			return errors.Wrapf(err, "搜索商品失败: %s", keyword)
 		}

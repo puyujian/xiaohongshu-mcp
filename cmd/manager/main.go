@@ -85,6 +85,13 @@ func main() {
 		api.GET("/users/:id/debug/logs", app.GetDebugLogs)
 		api.DELETE("/users/:id/debug/logs", app.DeleteDebugLogs)
 		api.GET("/users/:id/debug/logs/download", app.DownloadDebugLogs)
+
+		// 可视化调试（发布流程为主）：会话/步骤/网络/控制台/暂停/截图
+		api.GET("/users/:id/debug/flow/sessions", app.GetDebugFlowSessions)
+		api.GET("/users/:id/debug/flow/sessions/:sid/stream", app.GetDebugFlowStream)
+		api.GET("/users/:id/debug/flow/sessions/:sid/browser/screenshot", app.GetDebugFlowScreenshot)
+		api.POST("/users/:id/debug/flow/sessions/:sid/control", app.PostDebugFlowControl)
+		api.POST("/users/:id/debug/flow/sessions/:sid/browser/action", app.PostDebugFlowBrowserAction)
 	}
 
 	srv := &http.Server{

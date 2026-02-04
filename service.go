@@ -16,6 +16,7 @@ import (
 	"github.com/xpzouying/xiaohongshu-mcp/configs"
 	"github.com/xpzouying/xiaohongshu-mcp/cookies"
 	"github.com/xpzouying/xiaohongshu-mcp/pkg/downloader"
+	"github.com/xpzouying/xiaohongshu-mcp/pkg/flowdebug"
 	"github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
 )
 
@@ -27,11 +28,16 @@ type XiaohongshuService struct {
 	// 共享浏览器：同一份 UserDataDir 只能被一个 Chrome 进程使用
 	browserMu     sync.Mutex
 	sharedBrowser *browser.Browser
+
+	// 可视化调试：发布流程会话（步骤/网络/控制台/暂停）
+	flowDebug *FlowDebugCenter
 }
 
 // NewXiaohongshuService 创建小红书服务实例
 func NewXiaohongshuService() *XiaohongshuService {
-	return &XiaohongshuService{}
+	return &XiaohongshuService{
+		flowDebug: NewFlowDebugCenter(flowDebugDefaultMaxSessions),
+	}
 }
 
 // Close 在服务退出时调用，统一释放共享 Chrome 进程
@@ -44,6 +50,21 @@ func (s *XiaohongshuService) Close() {
 	if b != nil {
 		b.Close()
 	}
+}
+
+// ListFlowDebugSessions 获取最近的调试会话列表（最新在前）。
+func (s *XiaohongshuService) ListFlowDebugSessions() []FlowDebugSessionMeta {
+	if s.flowDebug == nil {
+		return nil
+	}
+	return s.flowDebug.List()
+}
+
+func (s *XiaohongshuService) GetFlowDebugSession(id string) (*FlowDebugSession, bool) {
+	if s.flowDebug == nil {
+		return nil, false
+	}
+	return s.flowDebug.Get(id)
 }
 
 // PublishRequest 发布请求
@@ -254,16 +275,31 @@ func (s *XiaohongshuService) ProcessLoginBrowserAction(ctx context.Context, acti
 
 // PublishContent 发布内容
 func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishRequest) (*PublishResponse, error) {
+	// 创建调试会话（无论是否打开 UI，均记录最近一次流程，便于排查发布失败原因）
+	sess := s.flowDebug.NewSession("publish_image")
+	dbgCtx := flowdebug.WithDebugger(ctx, sess)
+	sess.Step("收到发布图文请求", map[string]any{
+		"images":   len(req.Images),
+		"tags":     len(req.Tags),
+		"products": len(req.Products),
+	})
+
+	var endErr error
+	defer func() { sess.End(endErr) }()
+
 	// 验证标题长度
 	// 小红书限制：最大40个单位长度
 	// 中文/日文/韩文占2个单位，英文/数字占1个单位
 	if titleWidth := runewidth.StringWidth(req.Title); titleWidth > 40 {
-		return nil, fmt.Errorf("标题长度超过限制")
+		endErr = fmt.Errorf("标题长度超过限制")
+		return nil, endErr
 	}
 
 	// 处理图片：下载URL图片或使用本地路径
+	sess.Step("处理图片", map[string]any{"count": len(req.Images)})
 	imagePaths, err := s.processImages(req.Images)
 	if err != nil {
+		endErr = err
 		return nil, err
 	}
 
@@ -277,9 +313,11 @@ func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishReq
 	}
 
 	// 执行发布
-	if err := s.publishContent(ctx, content); err != nil {
-		logrus.Errorf("发布内容失败: title=%s %v", content.Title, err)
-		return nil, err
+	sess.Step("进入发布页并执行自动化流程", nil)
+	endErr = s.publishContent(dbgCtx, content, sess)
+	if endErr != nil {
+		logrus.Errorf("发布内容失败: title=%s %v", content.Title, endErr)
+		return nil, endErr
 	}
 
 	response := &PublishResponse{
@@ -299,15 +337,26 @@ func (s *XiaohongshuService) processImages(images []string) ([]string, error) {
 }
 
 // publishContent 执行内容发布
-func (s *XiaohongshuService) publishContent(ctx context.Context, content xiaohongshu.PublishImageContent) error {
+func (s *XiaohongshuService) publishContent(ctx context.Context, content xiaohongshu.PublishImageContent, sess *FlowDebugSession) error {
 	b, err := s.getBrowser()
 	if err != nil {
 		return err
 	}
 
 	page := b.NewPage()
-	defer page.Close()
+	if sess != nil {
+		sess.AttachPage(page)
+	}
+	defer func() {
+		if sess != nil {
+			sess.DetachPage()
+		}
+		_ = page.Close()
+	}()
 
+	if sess != nil {
+		sess.Step("打开发布页面", map[string]any{"url": "https://creator.xiaohongshu.com/publish/publish"})
+	}
 	action, err := xiaohongshu.NewPublishImageAction(page)
 	if err != nil {
 		return err
@@ -319,17 +368,30 @@ func (s *XiaohongshuService) publishContent(ctx context.Context, content xiaohon
 
 // PublishVideo 发布视频（本地文件）
 func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideoRequest) (*PublishVideoResponse, error) {
+	sess := s.flowDebug.NewSession("publish_video")
+	dbgCtx := flowdebug.WithDebugger(ctx, sess)
+	sess.Step("收到发布视频请求", map[string]any{
+		"tags":     len(req.Tags),
+		"products": len(req.Products),
+	})
+
+	var endErr error
+	defer func() { sess.End(endErr) }()
+
 	// 标题长度校验
 	if titleWidth := runewidth.StringWidth(req.Title); titleWidth > 40 {
-		return nil, fmt.Errorf("标题长度超过限制")
+		endErr = fmt.Errorf("标题长度超过限制")
+		return nil, endErr
 	}
 
 	// 本地视频文件校验
 	if req.Video == "" {
-		return nil, fmt.Errorf("必须提供本地视频文件")
+		endErr = fmt.Errorf("必须提供本地视频文件")
+		return nil, endErr
 	}
 	if _, err := os.Stat(req.Video); err != nil {
-		return nil, fmt.Errorf("视频文件不存在或不可访问: %v", err)
+		endErr = fmt.Errorf("视频文件不存在或不可访问: %v", err)
+		return nil, endErr
 	}
 
 	// 构建发布内容
@@ -342,8 +404,10 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 	}
 
 	// 执行发布
-	if err := s.publishVideo(ctx, content); err != nil {
-		return nil, err
+	sess.Step("进入发布页并执行自动化流程", nil)
+	endErr = s.publishVideo(dbgCtx, content, sess)
+	if endErr != nil {
+		return nil, endErr
 	}
 
 	resp := &PublishVideoResponse{
@@ -356,15 +420,26 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 }
 
 // publishVideo 执行视频发布
-func (s *XiaohongshuService) publishVideo(ctx context.Context, content xiaohongshu.PublishVideoContent) error {
+func (s *XiaohongshuService) publishVideo(ctx context.Context, content xiaohongshu.PublishVideoContent, sess *FlowDebugSession) error {
 	b, err := s.getBrowser()
 	if err != nil {
 		return err
 	}
 
 	page := b.NewPage()
-	defer page.Close()
+	if sess != nil {
+		sess.AttachPage(page)
+	}
+	defer func() {
+		if sess != nil {
+			sess.DetachPage()
+		}
+		_ = page.Close()
+	}()
 
+	if sess != nil {
+		sess.Step("打开发布页面", map[string]any{"url": "https://creator.xiaohongshu.com/publish/publish"})
+	}
 	action, err := xiaohongshu.NewPublishVideoAction(page)
 	if err != nil {
 		return err

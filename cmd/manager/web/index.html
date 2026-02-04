@@ -144,6 +144,7 @@
 
       <div class="tabs">
         <button class="active" data-tab="login">登录</button>
+        <button data-tab="flow">可视化调试</button>
         <button data-tab="cookies">Cookies</button>
         <button data-tab="mcp">MCP工具</button>
         <button data-tab="logs">日志</button>
@@ -176,6 +177,69 @@
           <div class="muted" style="margin-top:4px;">点击画面可发送点击事件，用于处理二次验证</div>
         </div>
         <div class="err" id="loginErr"></div>
+      </div>
+
+      <!-- 可视化调试 Tab -->
+      <div class="tab-content" id="tab-flow">
+        <div class="muted" style="margin-bottom: 8px;">用于发布流程调试：展示步骤、网络请求/响应、控制台日志，并支持暂停/继续。</div>
+        <div class="row" style="margin-bottom: 12px;">
+          <button id="btnFlowRefreshSessions" class="primary">刷新会话</button>
+          <select id="flowSessionSelect" class="w200">
+            <option value="">-- 暂无会话 --</option>
+          </select>
+          <button id="btnFlowPause">暂停</button>
+          <label class="switch" style="margin-left: 12px;">
+            <input type="checkbox" id="autoRefreshFlow" />
+            <span class="muted">自动刷新 (1秒)</span>
+          </label>
+          <button id="btnFlowClear">清空显示</button>
+        </div>
+        <div class="muted" id="flowStatusText">未选择会话</div>
+        <div class="err" id="flowErr"></div>
+
+        <div id="flowBrowserViewContainer" style="margin-top: 12px;">
+          <div class="row" style="margin-bottom:8px;">
+            <input id="flowBrowserInput" autocomplete="off" placeholder="输入文字/验证码..." style="width:200px;" />
+            <button id="btnFlowBrowserInput">发送文字</button>
+            <button id="btnFlowBrowserRefresh">刷新截图</button>
+          </div>
+          <div style="position:relative; border:1px solid var(--line); border-radius:8px; display:inline-block; max-width: 100%; overflow: hidden; background:#000;">
+            <img id="flowBrowserScreen" draggable="false" style="max-width:100%; cursor:crosshair; display:block; user-select:none;" alt="浏览器截图" />
+            <div id="flowClickFeedback" style="position:absolute; width:16px; height:16px; border-radius:50%; background:rgba(255,0,0,0.7); pointer-events:none; display:none; transform: translate(-50%, -50%); box-shadow: 0 0 8px rgba(255,0,0,0.5);"></div>
+          </div>
+          <div class="muted" style="margin-top:4px;">点击画面可发送点击事件（用于验证码/弹窗等）。</div>
+        </div>
+
+        <div class="row" style="margin-top: 12px; align-items: flex-start;">
+          <div style="flex: 1; min-width: 260px;">
+            <div class="muted" style="margin-bottom: 4px;">步骤/状态</div>
+            <pre id="flowSteps" class="json-output" style="max-height: 220px; white-space: pre-wrap; word-break: break-all;">暂无</pre>
+          </div>
+          <div style="flex: 1; min-width: 260px;">
+            <div class="muted" style="margin-bottom: 4px;">控制台日志</div>
+            <pre id="flowConsole" class="json-output" style="max-height: 220px; white-space: pre-wrap; word-break: break-all;">暂无</pre>
+          </div>
+        </div>
+
+        <div style="margin-top: 12px;">
+          <div class="row" style="margin-bottom: 8px;">
+            <div class="muted">网络请求</div>
+            <input id="flowNetFilter" autocomplete="off" placeholder="过滤：URL/方法/状态..." style="width:240px;" />
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 70px;">方法</th>
+                <th style="width: 60px;">状态</th>
+                <th>URL</th>
+                <th style="width: 70px;">类型</th>
+              </tr>
+            </thead>
+            <tbody id="flowNetTbody"></tbody>
+          </table>
+          <div class="muted" style="margin-top: 8px;">网络详情（点击上方某条请求查看）</div>
+          <pre id="flowNetDetail" class="json-output" style="max-height: 260px; white-space: pre-wrap; word-break: break-all;">请选择一条请求</pre>
+        </div>
       </div>
 
       <!-- Cookies Tab -->
@@ -322,6 +386,14 @@
     let loginPollTimer = null;
     let browserPollTimer = null;
     let logRefreshTimer = null;
+    let flowPollTimer = null;
+    let currentFlowSessionId = null;
+    let flowLastSeq = 0;
+    let flowNetById = new Map();
+    let flowNetOrder = [];
+    let flowStepLines = [];
+    let flowConsoleLines = [];
+    let flowLastSessionsRefreshAt = 0;
     let toolsCache = [];
     // 动态表单相关状态
     let currentTool = null;
@@ -548,6 +620,28 @@
       document.getElementById('toolArgsPreview').textContent = '请选择工具';
       document.getElementById('toggleJsonMode').textContent = '切换到JSON模式';
 
+      // 重置可视化调试（发布流程）状态
+      stopFlowPolling();
+      currentFlowSessionId = null;
+      flowLastSeq = 0;
+      flowNetById = new Map();
+      flowNetOrder = [];
+      flowStepLines = [];
+      flowConsoleLines = [];
+      flowLastSessionsRefreshAt = 0;
+      document.getElementById('flowSessionSelect').innerHTML = '<option value="">-- 暂无会话 --</option>';
+      document.getElementById('btnFlowPause').disabled = true;
+      document.getElementById('autoRefreshFlow').checked = false;
+      document.getElementById('flowStatusText').textContent = '未选择会话';
+      document.getElementById('flowErr').textContent = '';
+      document.getElementById('flowSteps').textContent = '暂无';
+      document.getElementById('flowConsole').textContent = '暂无';
+      document.getElementById('flowNetTbody').innerHTML = '';
+      document.getElementById('flowNetDetail').textContent = '请选择一条请求';
+      document.getElementById('flowNetFilter').value = '';
+      document.getElementById('flowBrowserInput').value = '';
+      document.getElementById('flowBrowserScreen').removeAttribute('src');
+
       // 切换到第一个tab
       switchTab('login');
 
@@ -570,6 +664,7 @@
         clearInterval(logRefreshTimer);
         logRefreshTimer = null;
       }
+      stopFlowPolling();
     }
 
     async function refreshDebugStatus() {
@@ -601,6 +696,13 @@
       document.querySelectorAll('.tab-content').forEach(content => {
         content.classList.toggle('active', content.id === 'tab-' + tabName);
       });
+
+      // Tab 进入/离开钩子
+      if (tabName === 'flow') {
+        enterFlowTab();
+      } else {
+        stopFlowPolling();
+      }
     }
 
     // 登录相关
@@ -723,6 +825,350 @@
       if (!text) return;
       sendBrowserAction('input', { text });
       input.value = ''; // 发送后清空
+    }
+
+    // 可视化调试（发布流程）相关
+    let flowPolling = false;
+    let flowSessionMeta = null;
+
+    function shortId(id) {
+      if (!id) return '';
+      return id.length > 6 ? id.slice(-6) : id;
+    }
+
+    function shortTime(ts) {
+      if (!ts) return '';
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
+      const t = d.toLocaleTimeString('zh-CN', { hour12: false });
+      const ms = String(d.getMilliseconds()).padStart(3, '0');
+      return `${t}.${ms}`;
+    }
+
+    function stopFlowPolling() {
+      if (flowPollTimer) {
+        clearInterval(flowPollTimer);
+        flowPollTimer = null;
+      }
+      flowPolling = false;
+    }
+
+    async function enterFlowTab() {
+      if (!currentDebugUser) return;
+      // 进入时先刷新一次会话与数据
+      await refreshFlowSessions();
+      await pollFlowOnce();
+      // 如果用户勾选自动刷新，则启动定时器
+      if (document.getElementById('autoRefreshFlow').checked) {
+        startFlowPolling();
+      }
+    }
+
+    function startFlowPolling() {
+      stopFlowPolling();
+      flowPollTimer = setInterval(() => {
+        // 避免并发 tick
+        if (flowPolling) return;
+        pollFlowTick();
+      }, 1000);
+    }
+
+    async function pollFlowTick() {
+      if (!currentDebugUser || !currentFlowSessionId) return;
+      flowPolling = true;
+      try {
+        // 会话列表不需要每秒刷新，做个简单节流
+        const now = Date.now();
+        if (now - flowLastSessionsRefreshAt > 5000) {
+          await refreshFlowSessions();
+        }
+        await pollFlowOnce();
+      } finally {
+        flowPolling = false;
+      }
+    }
+
+    async function refreshFlowSessions() {
+      if (!currentDebugUser) return;
+      const errEl = document.getElementById('flowErr');
+      errEl.textContent = '';
+      try {
+        const resp = await api('GET', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/flow/sessions`);
+        flowLastSessionsRefreshAt = Date.now();
+        const sessions = (resp && resp.sessions) ? resp.sessions : [];
+
+        const sel = document.getElementById('flowSessionSelect');
+        const prev = currentFlowSessionId;
+
+        if (!sessions.length) {
+          sel.innerHTML = '<option value="">-- 暂无会话 --</option>';
+          document.getElementById('btnFlowPause').disabled = true;
+          currentFlowSessionId = null;
+          flowSessionMeta = null;
+          document.getElementById('flowStatusText').textContent = '暂无会话（请先触发一次发布）';
+          return;
+        }
+
+        sel.innerHTML = sessions.map(s => {
+          const label = `#${shortId(s.id)} ${s.kind || '-'} | ${s.status || '-'}${s.paused ? '(暂停)' : ''} | ${shortTime(s.started_at)}`;
+          return `<option value="${esc(s.id)}">${esc(label)}</option>`;
+        }).join('');
+
+        // 选择策略：优先保持原会话；否则选择最新的 running/paused；否则选择第一条
+        const ids = new Set(sessions.map(x => x.id));
+        let next = prev && ids.has(prev) ? prev : null;
+        if (!next) {
+          const running = sessions.find(x => x.status === 'running' || x.status === 'paused');
+          next = (running && running.id) ? running.id : sessions[0].id;
+        }
+
+        sel.value = next;
+        if (next && next !== prev) {
+          selectFlowSession(next);
+        }
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    function selectFlowSession(sid) {
+      currentFlowSessionId = sid || null;
+      flowLastSeq = 0;
+      flowSessionMeta = null;
+      flowNetById = new Map();
+      flowNetOrder = [];
+      flowStepLines = [];
+      flowConsoleLines = [];
+
+      document.getElementById('flowErr').textContent = '';
+      document.getElementById('flowSteps').textContent = '加载中...';
+      document.getElementById('flowConsole').textContent = '加载中...';
+      document.getElementById('flowNetTbody').innerHTML = '';
+      document.getElementById('flowNetDetail').textContent = '请选择一条请求';
+      document.getElementById('btnFlowPause').disabled = !currentFlowSessionId;
+
+      refreshFlowScreenshot();
+      pollFlowOnce();
+    }
+
+    function appendLine(arr, line, max) {
+      arr.push(line);
+      if (arr.length > max) arr.splice(0, arr.length - max);
+    }
+
+    function formatEventLine(ev) {
+      const t = shortTime(ev.time);
+      const ty = (ev.type || '').toUpperCase();
+      const lv = ev.level ? `(${ev.level})` : '';
+      const data = ev.data ? safeStringify(ev.data) : '';
+      return `[${t}] ${ty}${lv} ${ev.message || ''}${data ? ' ' + data : ''}`;
+    }
+
+    async function pollFlowOnce() {
+      if (!currentDebugUser || !currentFlowSessionId) return;
+
+      const statusEl = document.getElementById('flowStatusText');
+      const errEl = document.getElementById('flowErr');
+      errEl.textContent = '';
+
+      try {
+        const resp = await api('GET', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/flow/sessions/${encodeURIComponent(currentFlowSessionId)}/stream?since=${flowLastSeq}&limit=800`);
+        const meta = resp && resp.session ? resp.session : null;
+        flowSessionMeta = meta;
+
+        if (meta) {
+          const base = `会话 #${shortId(meta.id)} | ${meta.kind || '-'} | 状态: ${meta.status || '-'}${meta.paused ? '(暂停)' : ''} | 开始: ${shortTime(meta.started_at)}${meta.ended_at ? ' | 结束: ' + shortTime(meta.ended_at) : ''}`;
+          statusEl.textContent = base;
+
+          const btnPause = document.getElementById('btnFlowPause');
+          if (meta.status === 'running') {
+            btnPause.disabled = false;
+            btnPause.textContent = '暂停';
+          } else if (meta.status === 'paused' || meta.paused) {
+            btnPause.disabled = false;
+            btnPause.textContent = '继续';
+          } else {
+            btnPause.disabled = true;
+            btnPause.textContent = meta.status === 'done' ? '已完成' : '已结束';
+          }
+
+          if (meta.error) {
+            errEl.textContent = meta.error_more ? (meta.error + '\n\n' + meta.error_more) : meta.error;
+          }
+        }
+
+        const events = (resp && resp.events) ? resp.events : [];
+        if (events.length) {
+          for (const ev of events) {
+            const type = ev.type || '';
+            if (type === 'step' || type === 'log' || type === 'status' || type === 'error') {
+              appendLine(flowStepLines, formatEventLine(ev), 400);
+              if (type === 'error' && !errEl.textContent) {
+                errEl.textContent = ev.data && ev.data.detail ? (ev.message + '\n\n' + ev.data.detail) : (ev.message || '发生错误');
+              }
+            } else if (type.startsWith('console')) {
+              appendLine(flowConsoleLines, formatEventLine(ev), 400);
+            } else if (type.startsWith('network.')) {
+              applyNetEvent(ev);
+            }
+          }
+          document.getElementById('flowSteps').textContent = flowStepLines.length ? flowStepLines.join('\n') : '暂无';
+          document.getElementById('flowConsole').textContent = flowConsoleLines.length ? flowConsoleLines.join('\n') : '暂无';
+          renderFlowNetTable();
+        }
+
+        if (resp && typeof resp.last_seq === 'number') {
+          flowLastSeq = resp.last_seq;
+        }
+        if (resp && resp.dropped) {
+          appendLine(flowStepLines, `[${shortTime(new Date().toISOString())}] WARN 事件过多已裁剪，建议刷新会话或清空显示`, 400);
+          document.getElementById('flowSteps').textContent = flowStepLines.join('\n');
+        }
+
+        refreshFlowScreenshot();
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    function refreshFlowScreenshot() {
+      if (!currentDebugUser || !currentFlowSessionId) return;
+      const img = document.getElementById('flowBrowserScreen');
+      img.style.display = 'block';
+      img.onerror = () => { img.style.display = 'none'; };
+      img.src = `${API}/users/${encodeURIComponent(currentDebugUser.id)}/debug/flow/sessions/${encodeURIComponent(currentFlowSessionId)}/browser/screenshot?t=${Date.now()}`;
+    }
+
+    async function sendFlowBrowserAction(type, data) {
+      if (!currentDebugUser || !currentFlowSessionId) return;
+      const errEl = document.getElementById('flowErr');
+      errEl.textContent = '';
+      try {
+        await api('POST', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/flow/sessions/${encodeURIComponent(currentFlowSessionId)}/browser/action`, {
+          type, ...data
+        });
+        setTimeout(refreshFlowScreenshot, 300);
+      } catch (e) {
+        errEl.textContent = '操作失败: ' + e.message;
+      }
+    }
+
+    function handleFlowBrowserScreenClick(e) {
+      const img = e.target;
+      const rect = img.getBoundingClientRect();
+      const clientX = e.clientX - rect.left;
+      const clientY = e.clientY - rect.top;
+
+      if (img.naturalWidth && img.clientWidth) {
+        const x = (clientX / img.clientWidth) * img.naturalWidth;
+        const y = (clientY / img.clientHeight) * img.naturalHeight;
+
+        const dot = document.getElementById('flowClickFeedback');
+        dot.style.left = clientX + 'px';
+        dot.style.top = clientY + 'px';
+        dot.style.display = 'block';
+        setTimeout(() => dot.style.display = 'none', 400);
+
+        sendFlowBrowserAction('click', { x, y });
+      }
+    }
+
+    function sendFlowBrowserInput() {
+      const input = document.getElementById('flowBrowserInput');
+      const text = input.value;
+      if (!text) return;
+      sendFlowBrowserAction('input', { text });
+      input.value = '';
+    }
+
+    async function toggleFlowPause() {
+      if (!currentDebugUser || !currentFlowSessionId) return;
+      const errEl = document.getElementById('flowErr');
+      errEl.textContent = '';
+
+      const paused = flowSessionMeta && (flowSessionMeta.paused || flowSessionMeta.status === 'paused');
+      const action = paused ? 'resume' : 'pause';
+
+      try {
+        await api('POST', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/flow/sessions/${encodeURIComponent(currentFlowSessionId)}/control`, { action });
+        await pollFlowOnce();
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    function clearFlowDisplay() {
+      flowStepLines = [];
+      flowConsoleLines = [];
+      flowNetById = new Map();
+      flowNetOrder = [];
+      document.getElementById('flowSteps').textContent = '已清空';
+      document.getElementById('flowConsole').textContent = '已清空';
+      document.getElementById('flowNetTbody').innerHTML = '';
+      document.getElementById('flowNetDetail').textContent = '请选择一条请求';
+    }
+
+    function applyNetEvent(ev) {
+      const data = ev.data || {};
+      const id = data.request_id || data.requestId || '';
+      if (!id) return;
+
+      let item = flowNetById.get(id);
+      if (!item) {
+        item = { id };
+        flowNetById.set(id, item);
+        flowNetOrder.push(id);
+        if (flowNetOrder.length > 500) {
+          const drop = flowNetOrder.splice(0, flowNetOrder.length - 500);
+          drop.forEach(did => flowNetById.delete(did));
+        }
+      }
+
+      item.last_seq = ev.seq;
+      item.last_time = ev.time;
+
+      if (ev.type === 'network.request') item.request = data;
+      if (ev.type === 'network.response') item.response = data;
+      if (ev.type === 'network.body') item.body = data;
+      if (ev.type === 'network.failed') item.failed = { message: ev.message, ...data };
+    }
+
+    function renderFlowNetTable() {
+      const tbody = document.getElementById('flowNetTbody');
+      const filter = (document.getElementById('flowNetFilter').value || '').trim().toLowerCase();
+
+      const ids = flowNetOrder.slice(-160).reverse();
+      const rows = [];
+      for (const id of ids) {
+        const it = flowNetById.get(id);
+        if (!it) continue;
+        const method = (it.request && it.request.method) ? it.request.method : (it.response && it.response.method) ? it.response.method : '-';
+        const url = (it.request && it.request.url) ? it.request.url : (it.response && it.response.url) ? it.response.url : '-';
+        const status = (it.response && typeof it.response.status === 'number') ? it.response.status : (it.failed ? 'ERR' : '-');
+        const type = (it.request && it.request.type) ? it.request.type : (it.response && it.response.type) ? it.response.type : '-';
+
+        const hay = `${method} ${status} ${type} ${url}`.toLowerCase();
+        if (filter && !hay.includes(filter)) continue;
+
+        rows.push(
+          `<tr data-net-id="${esc(id)}" style="cursor:pointer;">` +
+          `<td>${esc(String(method))}</td>` +
+          `<td>${esc(String(status))}</td>` +
+          `<td>${esc(String(url))}</td>` +
+          `<td>${esc(String(type))}</td>` +
+          `</tr>`
+        );
+      }
+      tbody.innerHTML = rows.join('') || `<tr><td colspan="4" class="muted">暂无</td></tr>`;
+    }
+
+    function onFlowNetRowClick(e) {
+      const tr = e.target && e.target.closest ? e.target.closest('tr[data-net-id]') : null;
+      if (!tr) return;
+      const id = tr.dataset.netId;
+      const it = flowNetById.get(id);
+      if (!it) return;
+      document.getElementById('flowNetDetail').textContent = JSON.stringify(it, null, 2);
     }
 
     // Cookies相关
@@ -1522,6 +1968,26 @@
     document.getElementById('browserInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') sendBrowserInput();
     });
+
+    // 可视化调试（发布流程）
+    document.getElementById('btnFlowRefreshSessions').addEventListener('click', refreshFlowSessions);
+    document.getElementById('flowSessionSelect').addEventListener('change', (e) => selectFlowSession(e.target.value));
+    document.getElementById('btnFlowPause').addEventListener('click', toggleFlowPause);
+    document.getElementById('autoRefreshFlow').addEventListener('change', (e) => {
+      const active = document.getElementById('tab-flow').classList.contains('active');
+      if (e.target.checked && active) startFlowPolling();
+      else stopFlowPolling();
+    });
+    document.getElementById('btnFlowClear').addEventListener('click', clearFlowDisplay);
+    document.getElementById('btnFlowBrowserRefresh').addEventListener('click', refreshFlowScreenshot);
+    document.getElementById('flowBrowserScreen').addEventListener('click', handleFlowBrowserScreenClick);
+    document.getElementById('btnFlowBrowserInput').addEventListener('click', sendFlowBrowserInput);
+    document.getElementById('flowBrowserInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendFlowBrowserInput();
+    });
+    document.getElementById('flowNetTbody').addEventListener('click', onFlowNetRowClick);
+    document.getElementById('flowNetFilter').addEventListener('input', renderFlowNetTable);
+
     document.getElementById('btnRefreshCookies').addEventListener('click', refreshCookies);
     document.getElementById('btnImportCookies').addEventListener('click', () => {
       const input = document.getElementById('cookieFileInput');

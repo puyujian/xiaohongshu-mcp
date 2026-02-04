@@ -285,6 +285,216 @@ func (a *App) PostDebugBrowserAction(c *gin.Context) {
 	c.Data(status, contentType, data)
 }
 
+// GetDebugFlowSessions 获取可视化调试会话列表（发布流程为主）
+func (a *App) GetDebugFlowSessions(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+
+	user, ok := a.store.GetUser(id)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	st := a.proc.GetStatus(id)
+	if !st.Running {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户进程未运行"})
+		return
+	}
+
+	if !a.proc.CheckHealth(user.Port, 800*time.Millisecond) {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户实例健康检查失败，请稍后重试"})
+		return
+	}
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/v1/debug/sessions", user.Port)
+	status, contentType, data, err := a.proxyGet(c.Request.Context(), url, 10*time.Second)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("转发请求失败: %v", err)})
+		return
+	}
+	c.Data(status, contentType, data)
+}
+
+// GetDebugFlowStream 增量拉取指定调试会话的事件流
+func (a *App) GetDebugFlowStream(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	sid := strings.TrimSpace(c.Param("sid"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+	if sid == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "sid 不能为空"})
+		return
+	}
+
+	user, ok := a.store.GetUser(id)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	st := a.proc.GetStatus(id)
+	if !st.Running {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户进程未运行"})
+		return
+	}
+
+	if !a.proc.CheckHealth(user.Port, 800*time.Millisecond) {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户实例健康检查失败，请稍后重试"})
+		return
+	}
+
+	q := c.Request.URL.RawQuery
+	if q != "" {
+		q = "?" + q
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/v1/debug/sessions/%s/stream%s", user.Port, sid, q)
+	status, contentType, data, err := a.proxyGet(c.Request.Context(), url, 10*time.Second)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("转发请求失败: %v", err)})
+		return
+	}
+	c.Data(status, contentType, data)
+}
+
+// GetDebugFlowScreenshot 获取指定调试会话的截图
+func (a *App) GetDebugFlowScreenshot(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	sid := strings.TrimSpace(c.Param("sid"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+	if sid == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "sid 不能为空"})
+		return
+	}
+
+	user, ok := a.store.GetUser(id)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	st := a.proc.GetStatus(id)
+	if !st.Running {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户进程未运行"})
+		return
+	}
+
+	if !a.proc.CheckHealth(user.Port, 800*time.Millisecond) {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户实例健康检查失败，请稍后重试"})
+		return
+	}
+
+	q := c.Request.URL.RawQuery
+	if q != "" {
+		q = "?" + q
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/v1/debug/sessions/%s/browser/screenshot%s", user.Port, sid, q)
+	status, contentType, data, err := a.proxyGet(c.Request.Context(), url, 10*time.Second)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("转发请求失败: %v", err)})
+		return
+	}
+	c.Data(status, contentType, data)
+}
+
+// PostDebugFlowControl 暂停/继续指定调试会话
+func (a *App) PostDebugFlowControl(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	sid := strings.TrimSpace(c.Param("sid"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+	if sid == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "sid 不能为空"})
+		return
+	}
+
+	user, ok := a.store.GetUser(id)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	st := a.proc.GetStatus(id)
+	if !st.Running {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户进程未运行"})
+		return
+	}
+
+	if !a.proc.CheckHealth(user.Port, 800*time.Millisecond) {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户实例健康检查失败，请稍后重试"})
+		return
+	}
+
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求体失败"})
+		return
+	}
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/v1/debug/sessions/%s/control", user.Port, sid)
+	status, contentType, data, err := a.proxyPostJSON(c.Request.Context(), url, bytes.NewReader(body), 10*time.Second)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("转发请求失败: %v", err)})
+		return
+	}
+	c.Data(status, contentType, data)
+}
+
+// PostDebugFlowBrowserAction 向会话页面发送 click/input 等交互
+func (a *App) PostDebugFlowBrowserAction(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	sid := strings.TrimSpace(c.Param("sid"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+	if sid == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "sid 不能为空"})
+		return
+	}
+
+	user, ok := a.store.GetUser(id)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	st := a.proc.GetStatus(id)
+	if !st.Running {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户进程未运行"})
+		return
+	}
+
+	if !a.proc.CheckHealth(user.Port, 800*time.Millisecond) {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户实例健康检查失败，请稍后重试"})
+		return
+	}
+
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求体失败"})
+		return
+	}
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/v1/debug/sessions/%s/browser/action", user.Port, sid)
+	status, contentType, data, err := a.proxyPostJSON(c.Request.Context(), url, bytes.NewReader(body), 10*time.Second)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("转发请求失败: %v", err)})
+		return
+	}
+	c.Data(status, contentType, data)
+}
+
 // GetDebugCookies 获取Cookie状态
 func (a *App) GetDebugCookies(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
