@@ -10,19 +10,21 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"github.com/xpzouying/xiaohongshu-mcp/pkg/flowdebug"
 )
 
 // PublishVideoContent 发布视频内容
 type PublishVideoContent struct {
-	Title     string
-	Content   string
-	Tags      []string
-	Products  []string
-	VideoPath string
+	Title        string
+	Content      string
+	Tags         []string
+	Products     []string
+	VideoPath    string
+	ScheduleTime *time.Time // 定时发布时间，nil 表示立即发布
 }
 
-// NewPublishVideoAction 进入发布页并切换到“上传视频”
+// NewPublishVideoAction 进入发布页并切换到"上传视频"
 func NewPublishVideoAction(page *rod.Page) (action *PublishAction, err error) {
 	defer recoverRodPanicAsError(nil, &err)
 
@@ -31,15 +33,19 @@ func NewPublishVideoAction(page *rod.Page) (action *PublishAction, err error) {
 	if err = navigateWithRetry(pp, urlOfPublic, 3); err != nil {
 		return nil, err
 	}
-	if err = pp.WaitIdle(time.Minute); err != nil {
-		return nil, err
+
+	// 使用 WaitLoad 代替 WaitIdle（更宽松）
+	if err := pp.WaitLoad(); err != nil {
+		logrus.Warnf("等待页面加载出现问题: %v，继续尝试", err)
 	}
-	if err = pp.WaitDOMStable(time.Second, 0); err != nil {
-		return nil, err
+	time.Sleep(2 * time.Second)
+
+	if err := pp.WaitDOMStable(time.Second, 0.1); err != nil {
+		logrus.Warnf("等待 DOM 稳定出现问题: %v，继续尝试", err)
 	}
 	time.Sleep(1 * time.Second)
 
-	if err := mustClickPublishTab(page, "上传视频"); err != nil {
+	if err := mustClickPublishTab(pp, "上传视频"); err != nil {
 		return nil, errors.Wrap(err, "切换到上传视频失败")
 	}
 
@@ -90,7 +96,7 @@ func (p *PublishAction) PublishVideo(ctx context.Context, content PublishVideoCo
 		dbg.Step("填写并提交发布", map[string]any{"tags": len(content.Tags)})
 		_ = dbg.WaitIfPaused(ctx)
 	}
-	if err := submitPublishVideo(ctx, page, content.Title, content.Content, content.Tags); err != nil {
+	if err := submitPublishVideo(ctx, page, content.Title, content.Content, content.Tags, content.ScheduleTime); err != nil {
 		return errors.Wrap(err, "小红书发布失败")
 	}
 	return nil
@@ -166,7 +172,7 @@ func waitForPublishButtonClickable(ctx context.Context, page *rod.Page) (*rod.El
 }
 
 // submitPublishVideo 填写标题、正文、标签并点击发布（等待按钮可点击后再提交）
-func submitPublishVideo(ctx context.Context, page *rod.Page, title, content string, tags []string) error {
+func submitPublishVideo(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time) error {
 	dbg := flowdebug.FromContext(ctx)
 
 	// 标题
@@ -174,8 +180,13 @@ func submitPublishVideo(ctx context.Context, page *rod.Page, title, content stri
 		dbg.Step("填写标题", map[string]any{"title_len": len(strings.TrimSpace(title))})
 		_ = dbg.WaitIfPaused(ctx)
 	}
-	titleElem := page.MustElement("div.d-input input")
-	titleElem.MustInput(title)
+	titleElem, err := page.Element("div.d-input input")
+	if err != nil {
+		return errors.Wrap(err, "查找标题输入框失败")
+	}
+	if err := titleElem.Input(title); err != nil {
+		return errors.Wrap(err, "输入标题失败")
+	}
 	time.Sleep(1 * time.Second)
 
 	// 正文 + 标签
@@ -186,14 +197,26 @@ func submitPublishVideo(ctx context.Context, page *rod.Page, title, content stri
 		})
 		_ = dbg.WaitIfPaused(ctx)
 	}
-	if contentElem, ok := getContentElement(page); ok {
-		contentElem.MustInput(content)
-		inputTags(contentElem, tags)
-	} else {
+	contentElem, ok := getContentElement(page)
+	if !ok {
 		return errors.New("没有找到内容输入框")
+	}
+	if err := contentElem.Input(content); err != nil {
+		return errors.Wrap(err, "输入正文失败")
+	}
+	if err := inputTags(contentElem, tags); err != nil {
+		return err
 	}
 
 	time.Sleep(1 * time.Second)
+
+	// 处理定时发布
+	if scheduleTime != nil {
+		if err := setSchedulePublish(page, *scheduleTime); err != nil {
+			return errors.Wrap(err, "设置定时发布失败")
+		}
+		slog.Info("定时发布设置完成", "schedule_time", scheduleTime.Format("2006-01-02 15:04"))
+	}
 
 	// 等待发布按钮可点击
 	btn, err := waitForPublishButtonClickable(ctx, page)
