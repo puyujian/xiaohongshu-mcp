@@ -45,6 +45,8 @@
 | GET | `/api/v1/feeds/list` | 获取 Feeds 列表 |
 | GET/POST | `/api/v1/feeds/search` | 搜索 Feeds |
 | POST | `/api/v1/feeds/detail` | 获取 Feed 详情 |
+| POST | `/api/v1/feeds/like` | 点赞/取消点赞 |
+| POST | `/api/v1/feeds/favorite` | 收藏/取消收藏 |
 | POST | `/api/v1/user/profile` | 获取用户主页信息 |
 | GET | `/api/v1/user/me` | 获取当前登录用户信息 |
 | POST | `/api/v1/feeds/comment` | 发表评论 |
@@ -721,9 +723,87 @@ GET /api/v1/user/me
 
 ---
 
-### 6. 评论管理
+### 6. 互动操作
 
-#### 6.1 发表评论
+#### 6.1 点赞/取消点赞
+
+对指定 Feed 执行点赞或取消点赞操作。
+
+**请求**
+```
+POST /api/v1/feeds/like
+Content-Type: application/json
+```
+
+**请求体**
+```json
+{
+  "feed_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+  "xsec_token": "security_token_here",
+  "unlike": false
+}
+```
+
+**请求参数说明:**
+- `feed_id` (string, required): Feed ID
+- `xsec_token` (string, required): 安全令牌
+- `unlike` (boolean, optional): 是否取消点赞，默认 `false`（点赞）；`true` 表示取消点赞
+
+**响应**
+```json
+{
+  "success": true,
+  "data": {
+    "feed_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+    "success": true,
+    "message": "点赞成功或已点赞"
+  },
+  "message": "点赞成功或已点赞"
+}
+```
+
+#### 6.2 收藏/取消收藏
+
+对指定 Feed 执行收藏或取消收藏操作。
+
+**请求**
+```
+POST /api/v1/feeds/favorite
+Content-Type: application/json
+```
+
+**请求体**
+```json
+{
+  "feed_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+  "xsec_token": "security_token_here",
+  "unfavorite": false
+}
+```
+
+**请求参数说明:**
+- `feed_id` (string, required): Feed ID
+- `xsec_token` (string, required): 安全令牌
+- `unfavorite` (boolean, optional): 是否取消收藏，默认 `false`（收藏）；`true` 表示取消收藏
+
+**响应**
+```json
+{
+  "success": true,
+  "data": {
+    "feed_id": "64f1a2b3c4d5e6f7a8b9c0d1",
+    "success": true,
+    "message": "收藏成功或已收藏"
+  },
+  "message": "收藏成功或已收藏"
+}
+```
+
+---
+
+### 7. 评论管理
+
+#### 7.1 发表评论
 
 对指定 Feed 发表评论。
 
@@ -760,7 +840,7 @@ Content-Type: application/json
 }
 ```
 
-#### 6.2 回复评论
+#### 7.2 回复评论
 
 回复指定评论。
 
@@ -805,11 +885,11 @@ Content-Type: application/json
 
 ---
 
-### 7. 管理器用户信息（多用户管理）
+### 8. 管理器用户信息（多用户管理）
 
 以下接口由管理器进程提供，默认监听 `18050` 端口。
 
-#### 7.1 获取全部用户信息
+#### 8.1 获取全部用户信息
 
 返回所有管理器用户的基础信息与运行状态（包含用户 ID 和端口）。
 
@@ -858,7 +938,7 @@ GET /api/manager/v1/users
 - `users[].running`: 进程是否在运行
 - `users[].health_ok`: 运行时健康检查结果
 
-#### 7.2 获取单个用户信息
+#### 8.2 获取单个用户信息
 
 按用户 ID 查询单个用户信息（包含端口和运行状态）。
 
@@ -912,6 +992,8 @@ GET /api/manager/v1/users/user1
 | `LIST_FEEDS_FAILED` | 500 | 获取 Feeds 列表失败 |
 | `SEARCH_FEEDS_FAILED` | 500 | 搜索 Feeds 失败 |
 | `GET_FEED_DETAIL_FAILED` | 500 | 获取 Feed 详情失败 |
+| `LIKE_FEED_FAILED` | 500 | 点赞操作失败 |
+| `FAVORITE_FEED_FAILED` | 500 | 收藏操作失败 |
 | `GET_USER_PROFILE_FAILED` | 500 | 获取用户主页信息失败 |
 | `GET_MY_PROFILE_FAILED` | 500 | 获取当前用户信息失败 |
 | `POST_COMMENT_FAILED` | 500 | 发表评论失败 |

@@ -57,6 +57,8 @@ func setupRoutes(appServer *AppServer) *gin.Engine {
 		api.GET("/feeds/search", appServer.searchFeedsHandler)
 		api.POST("/feeds/search", appServer.searchFeedsHandler)
 		api.POST("/feeds/detail", appServer.getFeedDetailHandler)
+		api.POST("/feeds/like", appServer.likeFeedHandler)
+		api.POST("/feeds/favorite", appServer.favoriteFeedHandler)
 		api.POST("/user/profile", appServer.userProfileHandler)
 		api.POST("/feeds/comment", appServer.postCommentHandler)
 		api.POST("/feeds/comment/reply", appServer.replyCommentHandler)
