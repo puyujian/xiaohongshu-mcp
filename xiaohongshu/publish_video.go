@@ -22,6 +22,7 @@ type PublishVideoContent struct {
 	Products     []string
 	VideoPath    string
 	ScheduleTime *time.Time // 定时发布时间，nil 表示立即发布
+	Visibility   string     // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
 }
 
 // NewPublishVideoAction 进入发布页并切换到"上传视频"
@@ -96,7 +97,7 @@ func (p *PublishAction) PublishVideo(ctx context.Context, content PublishVideoCo
 		dbg.Step("填写并提交发布", map[string]any{"tags": len(content.Tags)})
 		_ = dbg.WaitIfPaused(ctx)
 	}
-	if err := submitPublishVideo(ctx, page, content.Title, content.Content, content.Tags, content.ScheduleTime); err != nil {
+	if err := submitPublishVideo(ctx, page, content.Title, content.Content, content.Tags, content.ScheduleTime, content.Visibility); err != nil {
 		return errors.Wrap(err, "小红书发布失败")
 	}
 	return nil
@@ -172,7 +173,7 @@ func waitForPublishButtonClickable(ctx context.Context, page *rod.Page) (*rod.El
 }
 
 // submitPublishVideo 填写标题、正文、标签并点击发布（等待按钮可点击后再提交）
-func submitPublishVideo(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time) error {
+func submitPublishVideo(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, visibility string) error {
 	dbg := flowdebug.FromContext(ctx)
 
 	// 标题
@@ -204,6 +205,9 @@ func submitPublishVideo(ctx context.Context, page *rod.Page, title, content stri
 	if err := contentElem.Input(content); err != nil {
 		return errors.Wrap(err, "输入正文失败")
 	}
+	if err := waitAndClickTitleInput(titleElem); err != nil {
+		return err
+	}
 	if err := inputTags(contentElem, tags); err != nil {
 		return err
 	}
@@ -216,6 +220,11 @@ func submitPublishVideo(ctx context.Context, page *rod.Page, title, content stri
 			return errors.Wrap(err, "设置定时发布失败")
 		}
 		slog.Info("定时发布设置完成", "schedule_time", scheduleTime.Format("2006-01-02 15:04"))
+	}
+
+	// 设置可见范围
+	if err := setVisibility(page, visibility); err != nil {
+		return errors.Wrap(err, "设置可见范围失败")
 	}
 
 	// 等待发布按钮可点击

@@ -210,6 +210,46 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "yqdaddy",
+      "name": "mamage",
+      "avatar_url": "https://avatars.githubusercontent.com/u/44826388?v=4",
+      "profile": "https://blog.litpp.com/",
+      "contributions": [
+        "code",
+        "doc"
+      ]
+    },
+    {
+      "login": "YRYangang",
+      "name": "Runyang YOU",
+      "avatar_url": "https://avatars.githubusercontent.com/u/54588936?v=4",
+      "profile": "https://runyang.vercel.app/",
+      "contributions": [
+        "code",
+        "doc"
+      ]
+    },
+    {
+      "login": "Daily-AC",
+      "name": "e0_7",
+      "avatar_url": "https://avatars.githubusercontent.com/u/134906805?v=4",
+      "profile": "https://www.hnfnu.edu.cn/",
+      "contributions": [
+        "code",
+        "doc"
+      ]
+    },
+    {
+      "login": "prehisle",
+      "name": "prehisle",
+      "avatar_url": "https://avatars.githubusercontent.com/u/2081344?v=4",
+      "profile": "https://github.com/prehisle",
+      "contributions": [
+        "code",
+        "doc"
+      ]
     }
   ],
   "contributorsPerLine": 7,

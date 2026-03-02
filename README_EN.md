@@ -1,16 +1,20 @@
 # xiaohongshu-mcp
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+
 [![All Contributors](https://img.shields.io/badge/all_contributors-22-orange.svg?style=flat-square)](#contributors-)
+
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 
 [![Philanthropy](https://img.shields.io/badge/Philanthropy-CNY%201300.00-brightgreen?style=flat-square)](./DONATIONS.md)
-[![Gratitude](https://img.shields.io/badge/Gratitude-CNY%201069.93-blue?style=flat-square)](./DONATIONS.md)
+[![Gratitude](https://img.shields.io/badge/Gratitude-CNY%201285.92-blue?style=flat-square)](./DONATIONS.md)
 [![Docker Pulls](https://img.shields.io/docker/pulls/xpzouying/xiaohongshu-mcp?style=flat-square&logo=docker)](https://hub.docker.com/r/xpzouying/xiaohongshu-mcp)
 
 MCP for RedNote (Xiaohongshu) platform.
 
 - My blog article: [haha.ai/xiaohongshu-mcp](https://www.haha.ai/xiaohongshu-mcp)
+
+> **📌 Please read before submitting a PR: [Contributing Guide](./CONTRIBUTING.md)**
 
 **If you encounter any issues, be sure to check [Common Issues and Solutions](https://github.com/xpzouying/xiaohongshu-mcp/issues/56) first.**
 
@@ -210,6 +214,61 @@ Get RedNote user's personal profile information, including basic user informatio
 
 </details>
 
+<details>
+<summary><b>9. Reply to Comments</b></summary>
+
+Reply to a specific comment under a note, supporting precise replies to specific users' comments.
+
+**Feature Description:**
+
+- Reply to a specific comment under a note
+- Support locating target comment by comment ID or user ID
+- Requires feed_id, xsec_token, comment_id/user_id, and reply content
+
+**⚠️ Important Note:**
+
+- Must login first to use this feature
+- At least one of comment_id or user_id must be provided
+- These parameters can be obtained from the comment list in post details
+
+</details>
+
+<details>
+<summary><b>10. Like / Unlike</b></summary>
+
+Like or unlike a note, with smart detection of current status to avoid duplicate operations.
+
+**Feature Description:**
+
+- Like or unlike a specified note
+- Smart detection: skips liking if already liked, skips unliking if not liked
+- Requires feed_id and xsec_token
+
+**⚠️ Important Note:**
+
+- Must login first to use this feature
+- Default action is like, set unlike=true to unlike
+
+</details>
+
+<details>
+<summary><b>11. Favorite / Unfavorite</b></summary>
+
+Favorite a note or unfavorite it, with smart detection of current status to avoid duplicate operations.
+
+**Feature Description:**
+
+- Favorite or unfavorite a specified note
+- Smart detection: skips favoriting if already favorited, skips unfavoriting if not favorited
+- Requires feed_id and xsec_token
+
+**⚠️ Important Note:**
+
+- Must login first to use this feature
+- Default action is favorite, set unfavorite=true to unfavorite
+
+</details>
+
 **RedNote Basic Operation Knowledge**
 
 - **Title: (Very Important) RedNote requires titles to not exceed 20 characters**
@@ -350,6 +409,7 @@ docker build -t xpzouying/xiaohongshu-mcp .
 **4. Configuration Notes**
 
 The Docker version automatically:
+
 - Configures Chrome browser and Chinese fonts
 - Mounts `./data` for storing cookies
 - Mounts `./images` for storing publish images
@@ -612,7 +672,7 @@ Usage steps:
 
 - Use MCP Inspector to test connection
 - Test Ping Server functionality to verify connection
-- Check if List Tools returns 6 tools
+- Check if List Tools returns 13 tools
 
 </details>
 
@@ -691,14 +751,39 @@ Basic configuration template:
 After successful connection, you can use the following MCP tools:
 
 - `check_login_status` - Check RedNote login status (no parameters)
+- `get_login_qrcode` - Get login QR code, returns Base64 image and timeout (no parameters)
+- `delete_cookies` - Delete cookies file, reset login status, requires re-login after deletion (no parameters)
 - `publish_content` - Publish image-text content to RedNote (required: title, content, images)
-  - `images`: Supports HTTP links or local absolute paths, local paths recommended
+  - `images`: Image path list (minimum 1), supports HTTP links or local absolute paths, local paths recommended
+  - `tags`: Topic tags list (optional), e.g. `["food", "travel", "lifestyle"]`
+  - `schedule_at`: Scheduled publish time (optional), ISO8601 format, supports 1 hour to 14 days ahead
+  - `is_original`: Declare as original content (optional), default is not declared
+  - `visibility`: Visibility scope (optional), supports `public` (default), `self-only`, `friends-only`
 - `publish_with_video` - Publish video content to RedNote (required: title, content, video)
-  - `video`: Only supports local video file absolute paths
+  - `video`: Local video file absolute path (single file only)
+  - `tags`: Topic tags list (optional), e.g. `["food", "travel", "lifestyle"]`
+  - `schedule_at`: Scheduled publish time (optional), ISO8601 format, supports 1 hour to 14 days ahead
+  - `visibility`: Visibility scope (optional), supports `public` (default), `self-only`, `friends-only`
 - `list_feeds` - Get RedNote homepage recommendation list (no parameters)
 - `search_feeds` - Search RedNote content (required: keyword)
-- `get_feed_detail` - Get post details (required: feed_id, xsec_token)
+  - `filters`: Filter options (optional)
+    - `sort_by`: Sort by - `comprehensive` (default) | `latest` | `most liked` | `most comments` | `most saved`
+    - `note_type`: Note type - `unlimited` (default) | `video` | `image-text`
+    - `publish_time`: Publish time - `unlimited` (default) | `last day` | `last week` | `last 6 months`
+    - `search_scope`: Search scope - `unlimited` (default) | `viewed` | `not viewed` | `followed`
+    - `location`: Location - `unlimited` (default) | `same city` | `nearby`
+- `get_feed_detail` - Get post details including interaction data and comments (required: feed_id, xsec_token)
+  - `load_all_comments`: Whether to load all comments (optional), default false returns only first 10 top-level comments
+  - `limit`: Limit number of top-level comments to load (optional), only effective when load_all_comments=true, default 20
+  - `click_more_replies`: Whether to expand nested replies (optional), only effective when load_all_comments=true, default false
+  - `reply_limit`: Skip comments with too many replies (optional), only effective when click_more_replies=true, default 10
+  - `scroll_speed`: Scroll speed (optional), `slow` | `normal` | `fast`, only effective when load_all_comments=true
 - `post_comment_to_feed` - Post comments to RedNote posts (required: feed_id, xsec_token, content)
+- `reply_comment_in_feed` - Reply to a specific comment under a note (required: feed_id, xsec_token, content, and at least one of comment_id or user_id)
+- `like_feed` - Like / unlike a note (required: feed_id, xsec_token)
+  - `unlike`: Whether to unlike (optional), true to unlike, default is like
+- `favorite_feed` - Favorite / unfavorite a note (required: feed_id, xsec_token)
+  - `unfavorite`: Whether to unfavorite (optional), true to unfavorite, default is favorite
 - `user_profile` - Get user profile information (required: user_id, xsec_token)
 
 ### 2.4. Usage Examples
@@ -753,6 +838,7 @@ Use xiaohongshu-mcp's video publishing feature.
 
 **Q:** It shows publish success but the post doesn't actually appear?
 **A:** Troubleshooting steps:
+
 1. Re-publish using **non-headless mode**.
 2. Try publishing with **different content**.
 3. Login to RedNote web version and check if the account has been **restricted from web publishing due to risk control**.
@@ -764,6 +850,7 @@ Use xiaohongshu-mcp's video publishing feature.
 
 **Q:** The MCP program crashes on my device, how to resolve?
 **A:**
+
 1. It is recommended to **build from source**.
 2. Or use **Docker to install xiaohongshu-mcp**, refer to:
    - [Install xiaohongshu-mcp with Docker](https://github.com/xpzouying/xiaohongshu-mcp#:~:text=%E6%96%B9%E5%BC%8F%E4%B8%89%EF%BC%9A%E4%BD%BF%E7%94%A8%20Docker%20%E5%AE%B9%E5%99%A8%EF%BC%88%E6%9C%80%E7%AE%80%E5%8D%95%EF%BC%89)
@@ -773,6 +860,7 @@ Use xiaohongshu-mcp's video publishing feature.
 
 **Q:** When verifying MCP with `http://localhost:18060/mcp`, it shows connection error?
 **A:**
+
 - In a **Docker environment**, please use
   [http://host.docker.internal:18060/mcp](http://host.docker.internal:18060/mcp)
 - In a **non-Docker environment**, please use your **local IPv4 address** to access.
@@ -798,11 +886,22 @@ Use xiaohongshu-mcp's video publishing feature.
 
 **Important: Before asking questions in the group, please make sure to read the README documentation thoroughly and check Issues first.**
 
-<!-- Two-column layout: Feishu Group 3 | WeChat Group 14 -->
+### WeChat Group
 
-| 【Feishu Group 3】: Scan to join                                                                                           | 【WeChat Group 14】: Scan to join                                                                                           |
-| ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| <img src="https://github.com/user-attachments/assets/9a0ec41a-cb65-4f4e-a0f7-31658a49512d" alt="qrcode_2qun" width="300"> | <img src="https://github.com/user-attachments/assets/f597fbef-0d67-4a5d-a07c-3066bee49fc5" alt="WechatIMG119" width="300"> |
+|                                             【WeChat Group 15】: Scan to join                                              |
+| :------------------------------------------------------------------------------------------------------------------------: |
+| <img src="https://github.com/user-attachments/assets/73e23573-9ac1-414d-9192-f592548e9092" alt="WechatIMG119" width="300"> |
+
+### Feishu (Lark) Groups
+
+|                                                      Feishu Group 1                                                       |                                                      Feishu Group 2                                                       |                                                      Feishu Group 3                                                       |                                                      Feishu Group 4                                                       |
+| :-----------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------: |
+| <img src="https://github.com/user-attachments/assets/65579771-3543-4661-9b48-def48eed609b" alt="qr-feishu01" width="260"> | <img src="https://github.com/user-attachments/assets/4983ea42-ce5b-4e26-a8c0-33889093b579" alt="qr-feishu02" width="260"> | <img src="https://github.com/user-attachments/assets/c77b45da-6028-4d3a-b421-ccc6c7210695" alt="qr-feishu03" width="260"> | <img src="https://github.com/user-attachments/assets/c42f5595-71cd-4d9b-b7f8-0c333bd25e2b" alt="qr-feishu04" width="260"> |
+
+> **Note:**
+>
+> 1. WeChat group QR codes have a time limit. Sometimes I forget to update them — please wait for an update or submit an Issue to remind me.
+> 2. If a Feishu group is full, try scanning another group's QR code — there's always a spot somewhere.
 
 ## 🙏 Thanks to Contributors ✨
 

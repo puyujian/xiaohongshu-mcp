@@ -172,7 +172,9 @@ Content-Type: application/json
     "http://example.com/image2.jpg"
   ],
   "tags": ["标签1", "标签2"],
-  "products": ["商品ID1", "商品ID2"]
+  "products": ["商品ID1", "商品ID2"],
+  "is_original": false,
+  "visibility": "公开可见"
 }
 ```
 
@@ -182,6 +184,8 @@ Content-Type: application/json
 - `images` (array, required): 图片URL数组，至少包含一张图片
 - `tags` (array, optional): 标签数组
 - `products` (array, optional): 商品ID数组，用于关联商品到笔记
+- `is_original` (boolean, optional): 是否声明原创，`true` 为声明原创，默认 `false`
+- `visibility` (string, optional): 可见范围，支持: `公开可见`(默认)、`仅自己可见`、`仅互关好友可见`。不填则默认公开可见
 
 **响应**
 ```json
@@ -215,7 +219,8 @@ Content-Type: application/json
   "content": "视频内容描述",
   "video": "/Users/username/Videos/video.mp4",
   "tags": ["标签1", "标签2"],
-  "products": ["商品ID1", "商品ID2"]
+  "products": ["商品ID1", "商品ID2"],
+  "visibility": "公开可见"
 }
 ```
 
@@ -225,6 +230,7 @@ Content-Type: application/json
 - `video` (string, required): 本地视频文件绝对路径
 - `tags` (array, optional): 标签数组
 - `products` (array, optional): 商品ID数组，用于关联商品到视频
+- `visibility` (string, optional): 可见范围，支持: `公开可见`(默认)、`仅自己可见`、`仅互关好友可见`。不填则默认公开可见
 
 **响应**
 ```json

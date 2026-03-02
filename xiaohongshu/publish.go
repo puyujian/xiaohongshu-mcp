@@ -24,6 +24,8 @@ type PublishImageContent struct {
 	Products     []string
 	ImagePaths   []string
 	ScheduleTime *time.Time // 定时发布时间，nil 表示立即发布
+	IsOriginal   bool       // 是否声明原创
+	Visibility   string     // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
 }
 
 type PublishAction struct {
@@ -100,7 +102,7 @@ func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent
 		tags = tags[:10]
 	}
 
-	logrus.Infof("发布内容: title=%s, images=%d, tags=%v, products=%d, schedule=%v", content.Title, len(content.ImagePaths), tags, len(content.Products), content.ScheduleTime)
+	logrus.Infof("发布内容: title=%s, images=%d, tags=%v, products=%d, schedule=%v, original=%v, visibility=%s", content.Title, len(content.ImagePaths), tags, len(content.Products), content.ScheduleTime, content.IsOriginal, content.Visibility)
 
 	if len(content.Products) > 0 {
 		if dbg != nil {
@@ -116,7 +118,7 @@ func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent
 		dbg.Step("填写并提交发布", map[string]any{"tags": len(tags)})
 		_ = dbg.WaitIfPaused(ctx)
 	}
-	if err := submitPublish(ctx, page, content.Title, content.Content, tags, content.ScheduleTime); err != nil {
+	if err := submitPublish(ctx, page, content.Title, content.Content, tags, content.ScheduleTime, content.IsOriginal, content.Visibility); err != nil {
 		return errors.Wrap(err, "小红书发布失败")
 	}
 
@@ -324,7 +326,7 @@ func waitForUploadComplete(ctx context.Context, page *rod.Page, expectedCount in
 	return errors.Errorf("第%d张图片上传超时(60s)，请检查网络连接和图片大小", expectedCount)
 }
 
-func submitPublish(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time) error {
+func submitPublish(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, isOriginal bool, visibility string) error {
 	dbg := flowdebug.FromContext(ctx)
 
 	if dbg != nil {
@@ -362,6 +364,9 @@ func submitPublish(ctx context.Context, page *rod.Page, title, content string, t
 	if err := contentElem.Input(content); err != nil {
 		return errors.Wrap(err, "输入正文失败")
 	}
+	if err := waitAndClickTitleInput(titleElem); err != nil {
+		return err
+	}
 	if err := inputTags(contentElem, tags); err != nil {
 		return err
 	}
@@ -382,6 +387,19 @@ func submitPublish(ctx context.Context, page *rod.Page, title, content string, t
 		slog.Info("定时发布设置完成", "schedule_time", scheduleTime.Format("2006-01-02 15:04"))
 	}
 
+	// 设置可见范围
+	if err := setVisibility(page, visibility); err != nil {
+		return errors.Wrap(err, "设置可见范围失败")
+	}
+
+	// 处理原创声明
+	if isOriginal {
+		if err := setOriginal(page); err != nil {
+			slog.Warn("设置原创声明失败，继续发布", "error", err)
+		} else {
+			slog.Info("已声明原创")
+		}
+	}
 	if dbg != nil {
 		dbg.Step("点击发布按钮", nil)
 		_ = dbg.WaitIfPaused(ctx)
@@ -695,6 +713,17 @@ func waitForModalClose(page *rod.Page) error {
 	return errors.New("关闭商品选择弹窗超时")
 }
 
+// waitAndClickTitleInput 在填写正文后等待 1 秒并回点标题输入框，增强后续交互稳定性
+func waitAndClickTitleInput(titleElem *rod.Element) error {
+	slog.Info("正文填写完成，准备等待后回点标题输入框")
+	time.Sleep(1 * time.Second)
+	if err := titleElem.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return errors.Wrap(err, "回点标题输入框失败")
+	}
+	slog.Info("已回点标题输入框，继续后续发布流程")
+	return nil
+}
+
 // 检查标题是否超过最大长度
 func checkTitleMaxLength(page *rod.Page) error {
 	has, elem, err := page.Has(`div.title-container div.max_suffix`)
@@ -932,6 +961,52 @@ func isElementVisible(elem *rod.Element) bool {
 	return visible
 }
 
+// setVisibility 设置可见范围
+// 支持: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
+func setVisibility(page *rod.Page, visibility string) error {
+	if visibility == "" || visibility == "公开可见" {
+		slog.Info("可见范围使用默认：公开可见")
+		return nil
+	}
+
+	// 支持的选项校验
+	supported := map[string]bool{"仅自己可见": true, "仅互关好友可见": true}
+	if !supported[visibility] {
+		return errors.Errorf("不支持的可见范围: %s，支持: 公开可见、仅自己可见、仅互关好友可见", visibility)
+	}
+
+	// 点击可见范围下拉框
+	dropdown, err := page.Element("div.permission-card-wrapper div.d-select-content")
+	if err != nil {
+		return errors.Wrap(err, "查找可见范围下拉框失败")
+	}
+	if err := dropdown.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return errors.Wrap(err, "点击可见范围下拉框失败")
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	// 在弹窗中查找并点击目标选项
+	opts, err := page.Elements("div.d-options-wrapper div.d-grid-item div.custom-option")
+	if err != nil {
+		return errors.Wrap(err, "查找可见范围选项失败")
+	}
+	for _, opt := range opts {
+		text, err := opt.Text()
+		if err != nil {
+			continue
+		}
+		if strings.Contains(text, visibility) {
+			if err := opt.Click(proto.InputMouseButtonLeft, 1); err != nil {
+				return errors.Wrap(err, "选择可见范围失败")
+			}
+			slog.Info("已设置可见范围", "visibility", visibility)
+			time.Sleep(200 * time.Millisecond)
+			return nil
+		}
+	}
+	return errors.Errorf("未找到可见范围选项: %s", visibility)
+}
+
 // setSchedulePublish 设置定时发布时间
 func setSchedulePublish(page *rod.Page, t time.Time) error {
 	// 1. 点击定时发布开关
@@ -979,6 +1054,153 @@ func setDateTime(page *rod.Page, t time.Time) error {
 		return errors.Wrap(err, "输入日期时间失败")
 	}
 	slog.Info("已设置日期时间", "datetime", dateTimeStr)
+
+	return nil
+}
+
+// setOriginal 设置原创声明
+func setOriginal(page *rod.Page) error {
+	// 根据小红书创作者页面的实际结构：
+	// div.custom-switch-card 包含 span.has-tips 文本为"原创声明"
+	// 开关是 div.d-switch 组件
+
+	// 查找包含"原创声明"文本的 custom-switch-card
+	switchCards, err := page.Elements("div.custom-switch-card")
+	if err != nil {
+		return errors.Wrap(err, "查找原创声明卡片失败")
+	}
+
+	for _, card := range switchCards {
+		text, err := card.Text()
+		if err != nil {
+			continue
+		}
+
+		// 检查是否是原创声明卡片
+		if !strings.Contains(text, "原创声明") {
+			continue
+		}
+
+		// 找到原创声明卡片，查找其中的 d-switch
+		switchElem, err := card.Element("div.d-switch")
+		if err != nil {
+			continue
+		}
+
+		// 检查开关是否已打开
+		checked, err := switchElem.Eval(`() => {
+			const input = this.querySelector('input[type="checkbox"]');
+			return input ? input.checked : false;
+		}`)
+		if err != nil {
+			continue
+		}
+
+		if checked.Value.Bool() {
+			slog.Info("原创声明已开启")
+			return nil
+		}
+
+		// 点击开关
+		if err := switchElem.Click(proto.InputMouseButtonLeft, 1); err != nil {
+			return errors.Wrap(err, "点击原创声明开关失败")
+		}
+
+		time.Sleep(500 * time.Millisecond)
+
+		// 处理原创声明确认弹窗
+		if err := confirmOriginalDeclaration(page); err != nil {
+			return errors.Wrap(err, "确认原创声明失败")
+		}
+
+		slog.Info("已开启原创声明")
+		return nil
+	}
+
+	return errors.New("未找到原创声明选项")
+}
+
+// confirmOriginalDeclaration 处理原创声明确认弹窗
+func confirmOriginalDeclaration(page *rod.Page) error {
+	// 等待确认弹窗出现
+	time.Sleep(800 * time.Millisecond)
+
+	// 使用 JavaScript 直接处理弹窗，更可靠
+	result, err := page.Eval(`
+		() => {
+			// 查找包含"原创声明须知"的 footer 区域
+			const footers = document.querySelectorAll('div.footer');
+			for (const footer of footers) {
+				// 检查是否包含原创声明相关内容
+				if (!footer.textContent.includes('原创声明须知')) {
+					continue;
+				}
+
+				// 找到 checkbox 并勾选
+				const checkbox = footer.querySelector('div.d-checkbox input[type="checkbox"]');
+				if (checkbox && !checkbox.checked) {
+					checkbox.click();
+					console.log('已勾选原创声明须知 checkbox');
+				}
+
+				// 等待一下让按钮变为可用
+				return 'found_footer';
+			}
+			return 'footer_not_found';
+		}
+	`)
+	if err != nil {
+		slog.Warn("执行查找弹窗脚本失败", "error", err)
+	} else if result.Value.String() == "footer_not_found" {
+		slog.Warn("未找到原创声明确认弹窗的 footer")
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	// 再次使用 JavaScript 点击声明原创按钮
+	result2, err := page.Eval(`
+		() => {
+			const footers = document.querySelectorAll('div.footer');
+			for (const footer of footers) {
+				if (!footer.textContent.includes('声明原创')) {
+					continue;
+				}
+
+				// 找到声明原创按钮
+				const btn = footer.querySelector('button.custom-button');
+				if (btn) {
+					// 检查是否禁用
+					if (btn.classList.contains('disabled') || btn.disabled) {
+						// 尝试再次勾选 checkbox
+						const checkbox = footer.querySelector('div.d-checkbox input[type="checkbox"]');
+						if (checkbox && !checkbox.checked) {
+							checkbox.click();
+						}
+						return 'button_disabled';
+					}
+					btn.click();
+					return 'clicked';
+				}
+			}
+			return 'button_not_found';
+		}
+	`)
+	if err != nil {
+		return errors.Wrap(err, "执行点击按钮脚本失败")
+	}
+
+	status := result2.Value.String()
+	slog.Info("原创声明确认结果", "status", status)
+
+	if status == "button_not_found" {
+		return errors.New("未找到声明原创按钮")
+	}
+	if status == "button_disabled" {
+		return errors.New("声明原创按钮仍处于禁用状态")
+	}
+
+	slog.Info("已成功点击声明原创按钮")
+	time.Sleep(300 * time.Millisecond)
 
 	return nil
 }
