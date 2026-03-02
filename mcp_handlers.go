@@ -13,6 +13,18 @@ import (
 	"github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
 )
 
+// convertInterfaceSliceToStrings 将 []interface{} 转换为 []string
+// 用于统一处理 MCP 参数解析中的切片类型转换
+func convertInterfaceSliceToStrings(input []interface{}) []string {
+	result := make([]string, 0, len(input))
+	for _, item := range input {
+		if str, ok := item.(string); ok {
+			result = append(result, str)
+		}
+	}
+	return result
+}
+
 // MCP 工具处理函数
 
 // handleCheckLoginStatus 处理检查登录状态
@@ -119,36 +131,23 @@ func (s *AppServer) handlePublishContent(ctx context.Context, args map[string]in
 	tagsInterface, _ := args["tags"].([]interface{})
 	productsInterface, _ := args["products"].([]interface{})
 
-	var imagePaths []string
-	for _, path := range imagePathsInterface {
-		if pathStr, ok := path.(string); ok {
-			imagePaths = append(imagePaths, pathStr)
-		}
-	}
+	imagePaths := convertInterfaceSliceToStrings(imagePathsInterface)
+	tags := convertInterfaceSliceToStrings(tagsInterface)
+	products := convertInterfaceSliceToStrings(productsInterface)
 
-	var tags []string
-	for _, tag := range tagsInterface {
-		if tagStr, ok := tag.(string); ok {
-			tags = append(tags, tagStr)
-		}
-	}
+	// 解析定时发布参数
+	scheduleAt, _ := args["schedule_at"].(string)
 
-	var products []string
-	for _, product := range productsInterface {
-		if productStr, ok := product.(string); ok {
-			products = append(products, productStr)
-		}
-	}
-
-	logrus.Infof("MCP: 发布内容 - 标题: %s, 图片数量: %d, 标签数量: %d, 商品数量: %d", title, len(imagePaths), len(tags), len(products))
+	logrus.Infof("MCP: 发布内容 - 标题: %s, 图片数量: %d, 标签数量: %d, 商品数量: %d, 定时: %s", title, len(imagePaths), len(tags), len(products), scheduleAt)
 
 	// 构建发布请求
 	req := &PublishRequest{
-		Title:    title,
-		Content:  content,
-		Images:   imagePaths,
-		Tags:     tags,
-		Products: products,
+		Title:      title,
+		Content:    content,
+		Images:     imagePaths,
+		Tags:       tags,
+		Products:   products,
+		ScheduleAt: scheduleAt,
 	}
 
 	// 执行发布
@@ -182,19 +181,8 @@ func (s *AppServer) handlePublishVideo(ctx context.Context, args map[string]inte
 	tagsInterface, _ := args["tags"].([]interface{})
 	productsInterface, _ := args["products"].([]interface{})
 
-	var tags []string
-	for _, tag := range tagsInterface {
-		if tagStr, ok := tag.(string); ok {
-			tags = append(tags, tagStr)
-		}
-	}
-
-	var products []string
-	for _, product := range productsInterface {
-		if productStr, ok := product.(string); ok {
-			products = append(products, productStr)
-		}
-	}
+	tags := convertInterfaceSliceToStrings(tagsInterface)
+	products := convertInterfaceSliceToStrings(productsInterface)
 
 	if videoPath == "" {
 		return &MCPToolResult{
@@ -206,15 +194,19 @@ func (s *AppServer) handlePublishVideo(ctx context.Context, args map[string]inte
 		}
 	}
 
-	logrus.Infof("MCP: 发布视频 - 标题: %s, 标签数量: %d, 商品数量: %d", title, len(tags), len(products))
+	// 解析定时发布参数
+	scheduleAt, _ := args["schedule_at"].(string)
+
+	logrus.Infof("MCP: 发布视频 - 标题: %s, 标签数量: %d, 商品数量: %d, 定时: %s", title, len(tags), len(products), scheduleAt)
 
 	// 构建发布请求
 	req := &PublishVideoRequest{
-		Title:    title,
-		Content:  content,
-		Video:    videoPath,
-		Tags:     tags,
-		Products: products,
+		Title:      title,
+		Content:    content,
+		Video:      videoPath,
+		Tags:       tags,
+		Products:   products,
+		ScheduleAt: scheduleAt,
 	}
 
 	// 执行发布

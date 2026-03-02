@@ -40,6 +40,16 @@ func setupRoutes(appServer *AppServer) *gin.Engine {
 	{
 		api.GET("/login/status", appServer.checkLoginStatusHandler)
 		api.GET("/login/qrcode", appServer.getLoginQrcodeHandler)
+		api.GET("/login/browser/screenshot", appServer.getLoginBrowserScreenshotHandler)
+		api.POST("/login/browser/action", appServer.postLoginBrowserActionHandler)
+
+		// 可视化调试（发布流程为主）：会话/步骤/网络/控制台/暂停/截图
+		api.GET("/debug/sessions", appServer.listFlowDebugSessionsHandler)
+		api.GET("/debug/sessions/:sid/stream", appServer.streamFlowDebugSessionHandler)
+		api.GET("/debug/sessions/:sid/browser/screenshot", appServer.getFlowDebugSessionScreenshotHandler)
+		api.POST("/debug/sessions/:sid/control", appServer.postFlowDebugSessionControlHandler)
+		api.POST("/debug/sessions/:sid/browser/action", appServer.postFlowDebugSessionBrowserActionHandler)
+
 		api.DELETE("/login/cookies", appServer.deleteCookiesHandler)
 		api.POST("/publish", appServer.publishHandler)
 		api.POST("/publish_video", appServer.publishVideoHandler)

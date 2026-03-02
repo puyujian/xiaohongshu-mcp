@@ -13,15 +13,17 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/xpzouying/xiaohongshu-mcp/pkg/flowdebug"
 )
 
 // PublishImageContent 发布图文内容
 type PublishImageContent struct {
-	Title      string
-	Content    string
-	Tags       []string
-	Products   []string
-	ImagePaths []string
+	Title        string
+	Content      string
+	Tags         []string
+	Products     []string
+	ImagePaths   []string
+	ScheduleTime *time.Time // 定时发布时间，nil 表示立即发布
 }
 
 type PublishAction struct {
@@ -32,14 +34,28 @@ const (
 	urlOfPublic = `https://creator.xiaohongshu.com/publish/publish?source=official`
 )
 
-func NewPublishImageAction(page *rod.Page) (*PublishAction, error) {
+func NewPublishImageAction(page *rod.Page) (action *PublishAction, err error) {
+	defer recoverRodPanicAsError(nil, &err)
 
 	pp := page.Timeout(300 * time.Second)
 
-	pp.MustNavigate(urlOfPublic).MustWaitIdle().MustWaitDOMStable()
+	if err = navigateWithRetry(pp, urlOfPublic, 3); err != nil {
+		return nil, err
+	}
+
+	// 使用 WaitLoad 代替 WaitIdle（更宽松）
+	if err := pp.WaitLoad(); err != nil {
+		logrus.Warnf("等待页面加载出现问题: %v，继续尝试", err)
+	}
+	time.Sleep(2 * time.Second)
+
+	// 等待页面稳定
+	if err := pp.WaitDOMStable(time.Second, 0.1); err != nil {
+		logrus.Warnf("等待 DOM 稳定出现问题: %v，继续尝试", err)
+	}
 	time.Sleep(1 * time.Second)
 
-	if err := mustClickPublishTab(page, "上传图文"); err != nil {
+	if err := mustClickPublishTab(pp, "上传图文"); err != nil {
 		logrus.Errorf("点击上传图文 TAB 失败: %v", err)
 		return nil, err
 	}
@@ -51,14 +67,30 @@ func NewPublishImageAction(page *rod.Page) (*PublishAction, error) {
 	}, nil
 }
 
-func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent) error {
+func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent) (err error) {
+	defer recoverRodPanicAsError(ctx, &err)
+
+	dbg := flowdebug.FromContext(ctx)
+	if dbg != nil {
+		dbg.Step("开始发布图文", map[string]any{
+			"images":   len(content.ImagePaths),
+			"tags":     len(content.Tags),
+			"products": len(content.Products),
+		})
+		_ = dbg.WaitIfPaused(ctx)
+	}
+
 	if len(content.ImagePaths) == 0 {
 		return errors.New("图片不能为空")
 	}
 
 	page := p.page.Context(ctx)
 
-	if err := uploadImages(page, content.ImagePaths); err != nil {
+	if dbg != nil {
+		dbg.Step("上传图片", map[string]any{"count": len(content.ImagePaths)})
+		_ = dbg.WaitIfPaused(ctx)
+	}
+	if err := uploadImages(ctx, page, content.ImagePaths); err != nil {
 		return errors.Wrap(err, "小红书上传图片失败")
 	}
 
@@ -68,15 +100,23 @@ func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent
 		tags = tags[:10]
 	}
 
-	logrus.Infof("发布内容: title=%s, images=%d, tags=%v, products=%d", content.Title, len(content.ImagePaths), tags, len(content.Products))
+	logrus.Infof("发布内容: title=%s, images=%d, tags=%v, products=%d, schedule=%v", content.Title, len(content.ImagePaths), tags, len(content.Products), content.ScheduleTime)
 
 	if len(content.Products) > 0 {
-		if err := addProducts(page, content.Products); err != nil {
+		if dbg != nil {
+			dbg.Step("选择商品", map[string]any{"count": len(content.Products)})
+			_ = dbg.WaitIfPaused(ctx)
+		}
+		if err := addProducts(ctx, page, content.Products); err != nil {
 			return errors.Wrap(err, "选择商品失败")
 		}
 	}
 
-	if err := submitPublish(page, content.Title, content.Content, tags); err != nil {
+	if dbg != nil {
+		dbg.Step("填写并提交发布", map[string]any{"tags": len(tags)})
+		_ = dbg.WaitIfPaused(ctx)
+	}
+	if err := submitPublish(ctx, page, content.Title, content.Content, tags, content.ScheduleTime); err != nil {
 		return errors.Wrap(err, "小红书发布失败")
 	}
 
@@ -190,89 +230,175 @@ func isElementBlocked(elem *rod.Element) (bool, error) {
 	return result.Value.Bool(), nil
 }
 
-func uploadImages(page *rod.Page, imagesPaths []string) error {
-	pp := page.Timeout(30 * time.Second)
+func uploadImages(ctx context.Context, page *rod.Page, imagesPaths []string) error {
+	dbg := flowdebug.FromContext(ctx)
 
 	// 验证文件路径有效性
 	validPaths := make([]string, 0, len(imagesPaths))
 	for _, path := range imagesPaths {
+		if dbg != nil {
+			_ = dbg.WaitIfPaused(ctx)
+		}
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			logrus.Warnf("图片文件不存在: %s", path)
 			continue
 		}
 		validPaths = append(validPaths, path)
-
 		logrus.Infof("获取有效图片：%s", path)
 	}
 
-	// 等待上传输入框出现
-	uploadInput := pp.MustElement(".upload-input")
+	// 逐张上传：每张上传后等待预览出现，再上传下一张
+	for i, path := range validPaths {
+		if dbg != nil {
+			dbg.Log("info", "上传图片", map[string]any{
+				"index": i + 1,
+				"total": len(validPaths),
+				"path":  path,
+			})
+			_ = dbg.WaitIfPaused(ctx)
+		}
 
-	// 上传多个文件
-	uploadInput.MustSetFiles(validPaths...)
+		selector := `input[type="file"]`
+		if i == 0 {
+			selector = ".upload-input"
+		}
 
-	// 等待并验证上传完成
-	return waitForUploadComplete(pp, len(validPaths))
+		uploadInput, err := page.Element(selector)
+		if err != nil {
+			return errors.Wrapf(err, "查找上传输入框失败(第%d张)", i+1)
+		}
+		if err := uploadInput.SetFiles([]string{path}); err != nil {
+			return errors.Wrapf(err, "上传第%d张图片失败", i+1)
+		}
+
+		slog.Info("图片已提交上传", "index", i+1, "path", path)
+
+		// 等待当前图片上传完成（预览元素数量达到 i+1），最多等 60 秒
+		if err := waitForUploadComplete(ctx, page, i+1); err != nil {
+			return errors.Wrapf(err, "第%d张图片上传超时", i+1)
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	return nil
 }
 
-// waitForUploadComplete 等待并验证上传完成
-func waitForUploadComplete(page *rod.Page, expectedCount int) error {
+// waitForUploadComplete 等待第 expectedCount 张图片上传完成，最多等 60 秒
+func waitForUploadComplete(ctx context.Context, page *rod.Page, expectedCount int) error {
 	maxWaitTime := 60 * time.Second
 	checkInterval := 500 * time.Millisecond
 	start := time.Now()
+	dbg := flowdebug.FromContext(ctx)
 
-	slog.Info("开始等待图片上传完成", "expected_count", expectedCount)
-
+	lastCount := -1
 	for time.Since(start) < maxWaitTime {
-		// 使用具体的pr类名检查已上传的图片
+		if dbg != nil {
+			_ = dbg.WaitIfPaused(ctx)
+		}
 		uploadedImages, err := page.Elements(".img-preview-area .pr")
+		if err != nil {
+			time.Sleep(checkInterval)
+			continue
+		}
 
-		slog.Info("uploadedImages", "uploadedImages", uploadedImages)
-
-		if err == nil {
-			currentCount := len(uploadedImages)
-			slog.Info("检测到已上传图片", "current_count", currentCount, "expected_count", expectedCount)
-			if currentCount >= expectedCount {
-				slog.Info("所有图片上传完成", "count", currentCount)
-				return nil
+		currentCount := len(uploadedImages)
+		// 数量变化时才打印，避免刷屏
+		if currentCount != lastCount {
+			slog.Info("等待图片上传", "current", currentCount, "expected", expectedCount)
+			if dbg != nil {
+				dbg.Log("info", "图片上传进度", map[string]any{
+					"current":  currentCount,
+					"expected": expectedCount,
+				})
 			}
-		} else {
-			slog.Debug("未找到已上传图片元素")
+			lastCount = currentCount
+		}
+		if currentCount >= expectedCount {
+			slog.Info("图片上传完成", "count", currentCount)
+			return nil
 		}
 
 		time.Sleep(checkInterval)
 	}
 
-	return errors.New("上传超时，请检查网络连接和图片大小")
+	return errors.Errorf("第%d张图片上传超时(60s)，请检查网络连接和图片大小", expectedCount)
 }
 
-func submitPublish(page *rod.Page, title, content string, tags []string) error {
+func submitPublish(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time) error {
+	dbg := flowdebug.FromContext(ctx)
 
-	titleElem := page.MustElement("div.d-input input")
-	titleElem.MustInput(title)
+	if dbg != nil {
+		dbg.Step("填写标题", map[string]any{"title_len": len(strings.TrimSpace(title))})
+		_ = dbg.WaitIfPaused(ctx)
+	}
+	titleElem, err := page.Element("div.d-input input")
+	if err != nil {
+		return errors.Wrap(err, "查找标题输入框失败")
+	}
+	if err := titleElem.Input(title); err != nil {
+		return errors.Wrap(err, "输入标题失败")
+	}
+
+	// 检查标题长度
+	time.Sleep(500 * time.Millisecond)
+	if err := checkTitleMaxLength(page); err != nil {
+		return err
+	}
+	slog.Info("检查标题长度：通过")
 
 	time.Sleep(1 * time.Second)
 
-	if contentElem, ok := getContentElement(page); ok {
-		contentElem.MustInput(content)
-
-		inputTags(contentElem, tags)
-
-	} else {
+	if dbg != nil {
+		dbg.Step("填写正文/标签", map[string]any{
+			"content_len": len(strings.TrimSpace(content)),
+			"tags":        len(tags),
+		})
+		_ = dbg.WaitIfPaused(ctx)
+	}
+	contentElem, ok := getContentElement(page)
+	if !ok {
 		return errors.New("没有找到内容输入框")
+	}
+	if err := contentElem.Input(content); err != nil {
+		return errors.Wrap(err, "输入正文失败")
+	}
+	if err := inputTags(contentElem, tags); err != nil {
+		return err
 	}
 
 	time.Sleep(1 * time.Second)
 
-	submitButton := page.MustElement("div.submit div.d-button-content")
-	submitButton.MustClick()
+	// 检查正文长度
+	if err := checkContentMaxLength(page); err != nil {
+		return err
+	}
+	slog.Info("检查正文长度：通过")
+
+	// 处理定时发布
+	if scheduleTime != nil {
+		if err := setSchedulePublish(page, *scheduleTime); err != nil {
+			return errors.Wrap(err, "设置定时发布失败")
+		}
+		slog.Info("定时发布设置完成", "schedule_time", scheduleTime.Format("2006-01-02 15:04"))
+	}
+
+	if dbg != nil {
+		dbg.Step("点击发布按钮", nil)
+		_ = dbg.WaitIfPaused(ctx)
+	}
+	submitButton, err := page.Element(".publish-page-publish-btn button.bg-red")
+	if err != nil {
+		return errors.Wrap(err, "查找发布按钮失败")
+	}
+	if err := submitButton.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return errors.Wrap(err, "点击发布按钮失败")
+	}
 
 	time.Sleep(3 * time.Second)
-
 	return nil
 }
 
-func addProducts(page *rod.Page, productKeywords []string) error {
+func addProducts(ctx context.Context, page *rod.Page, productKeywords []string) error {
 	keywords := make([]string, 0, len(productKeywords))
 	for _, keyword := range productKeywords {
 		trimmed := strings.TrimSpace(keyword)
@@ -316,6 +442,11 @@ func addProducts(page *rod.Page, productKeywords []string) error {
 	}
 
 	for _, keyword := range keywords {
+		dbg := flowdebug.FromContext(ctx)
+		if dbg != nil {
+			dbg.Log("info", "搜索并选择商品", map[string]any{"keyword": keyword})
+			_ = dbg.WaitIfPaused(ctx)
+		}
 		if err := inputProductSearchKeyword(searchInput, keyword); err != nil {
 			return errors.Wrapf(err, "搜索商品失败: %s", keyword)
 		}
@@ -385,9 +516,52 @@ func inputProductSearchKeyword(input *rod.Element, keyword string) error {
 }
 
 func selectProductByKeyword(modal *rod.Element, keyword string) error {
-	lowerKeyword := strings.ToLower(keyword)
+	lowerKeyword := strings.ToLower(strings.TrimSpace(keyword))
+	if lowerKeyword == "" {
+		return errors.New("商品关键词不能为空")
+	}
 
-	// 通过 JavaScript 原子操作完成查找和勾选，避免元素引用失效
+	const maxRetries = 5
+	const retryInterval = 500 * time.Millisecond
+
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		success, alreadyChecked, err := trySelectProduct(modal, lowerKeyword)
+		if err != nil {
+			lastErr = err
+			logrus.Debugf("选择商品第%d次尝试失败: %s, error: %v", attempt, keyword, err)
+			if attempt < maxRetries {
+				time.Sleep(retryInterval)
+			}
+			continue
+		}
+
+		if success {
+			if alreadyChecked {
+				logrus.Debugf("商品已选中: %s", keyword)
+				return nil
+			}
+
+			// 等待勾选状态生效并做校验
+			if err := waitForProductChecked(modal, lowerKeyword, 2*time.Second); err != nil {
+				lastErr = errors.Wrap(err, "勾选状态未生效")
+				logrus.Debugf("选择商品第%d次尝试勾选状态未生效: %s", attempt, keyword)
+				if attempt < maxRetries {
+					time.Sleep(retryInterval)
+				}
+				continue
+			}
+			return nil
+		}
+	}
+
+	if lastErr != nil {
+		return errors.Wrapf(lastErr, "重试%d次后仍失败", maxRetries)
+	}
+	return errors.Errorf("重试%d次后未找到匹配商品: %s", maxRetries, keyword)
+}
+
+func trySelectProduct(modal *rod.Element, lowerKeyword string) (success bool, alreadyChecked bool, err error) {
 	result, err := modal.Eval(`(keyword) => {
 		const cards = this.querySelectorAll('.good-card-container');
 
@@ -395,8 +569,9 @@ func selectProductByKeyword(modal *rod.Element, keyword string) error {
 			const nameElem = card.querySelector('.sku-name');
 			if (!nameElem) continue;
 
-			const name = nameElem.textContent || '';
-			if (!name.toLowerCase().includes(keyword)) continue;
+			const name = (nameElem.textContent || '').toLowerCase();
+			const idText = (card.querySelector('.sku-id')?.textContent || '').toLowerCase();
+			if (!name.includes(keyword) && !idText.includes(keyword)) continue;
 
 			// 找到匹配的商品，检查是否已选中
 			const checkbox = card.querySelector('input[type="checkbox"]');
@@ -404,44 +579,80 @@ func selectProductByKeyword(modal *rod.Element, keyword string) error {
 				return { success: true, alreadyChecked: true };
 			}
 
-			// 查找并点击复选框容器
-			const checkboxContainer = card.querySelector('.d-checkbox');
-			if (!checkboxContainer) {
-				return { success: false, error: '未找到复选框容器' };
-			}
+				// 查找并点击复选框容器（优先点击可交互区域）
+				const checkboxContainer = card.querySelector('.d-checkbox-main') || card.querySelector('.d-checkbox');
+				if (!checkboxContainer) {
+					return { success: false, error: '未找到复选框容器' };
+				}
 
-			checkboxContainer.click();
-			return { success: true, alreadyChecked: false };
+				checkboxContainer.click();
+				return { success: true, alreadyChecked: false };
 		}
 
 		return { success: false, error: '未找到匹配商品' };
 	}`, lowerKeyword)
 
 	if err != nil {
-		return errors.Wrap(err, "执行选择脚本失败")
+		return false, false, errors.Wrap(err, "执行选择脚本失败")
 	}
 
-	// 获取返回的对象
-	success := result.Value.Get("success").Bool()
-
-	if !success {
+	successVal := result.Value.Get("success").Bool()
+	if !successVal {
 		errorMsg := result.Value.Get("error").Str()
 		if errorMsg == "" {
 			errorMsg = "未知错误"
 		}
-		return errors.New(errorMsg)
+		return false, false, errors.New(errorMsg)
 	}
 
-	alreadyChecked := result.Value.Get("alreadyChecked").Bool()
-	if alreadyChecked {
-		logrus.Debugf("商品已选中: %s", keyword)
+	return true, result.Value.Get("alreadyChecked").Bool(), nil
+}
+
+func waitForProductChecked(modal *rod.Element, lowerKeyword string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		found, checked, err := getProductCheckedState(modal, lowerKeyword)
+		if err == nil && found && checked {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	found, checked, err := getProductCheckedState(modal, lowerKeyword)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("未找到匹配商品卡片")
+	}
+	if checked {
 		return nil
 	}
+	return errors.New("复选框仍未处于选中状态")
+}
 
-	// 等待勾选状态生效
-	time.Sleep(300 * time.Millisecond)
+func getProductCheckedState(modal *rod.Element, lowerKeyword string) (found bool, checked bool, err error) {
+	result, err := modal.Eval(`(keyword) => {
+		const cards = this.querySelectorAll('.good-card-container');
+		for (let card of cards) {
+			const nameElem = card.querySelector('.sku-name');
+			if (!nameElem) continue;
 
-	return nil
+			const name = (nameElem.textContent || '').toLowerCase();
+			const idText = (card.querySelector('.sku-id')?.textContent || '').toLowerCase();
+			if (!name.includes(keyword) && !idText.includes(keyword)) continue;
+
+			const checkbox = card.querySelector('input[type="checkbox"]');
+			return { found: true, checked: !!(checkbox && checkbox.checked) };
+		}
+
+		return { found: false, checked: false };
+	}`, lowerKeyword)
+	if err != nil {
+		return false, false, err
+	}
+
+	return result.Value.Get("found").Bool(), result.Value.Get("checked").Bool(), nil
 }
 
 func waitForProductListLoad(modal *rod.Element) error {
@@ -484,6 +695,58 @@ func waitForModalClose(page *rod.Page) error {
 	return errors.New("关闭商品选择弹窗超时")
 }
 
+// 检查标题是否超过最大长度
+func checkTitleMaxLength(page *rod.Page) error {
+	has, elem, err := page.Has(`div.title-container div.max_suffix`)
+	if err != nil {
+		return errors.Wrap(err, "检查标题长度元素失败")
+	}
+
+	// 元素不存在，说明标题没超长
+	if !has {
+		return nil
+	}
+
+	// 元素存在，说明标题超长
+	titleLength, err := elem.Text()
+	if err != nil {
+		return errors.Wrap(err, "获取标题长度文本失败")
+	}
+
+	return makeMaxLengthError(titleLength)
+}
+
+func checkContentMaxLength(page *rod.Page) error {
+	has, elem, err := page.Has(`div.edit-container div.length-error`)
+	if err != nil {
+		return errors.Wrap(err, "检查正文长度元素失败")
+	}
+
+	// 元素不存在，说明正文没超长
+	if !has {
+		return nil
+	}
+
+	// 元素存在，说明正文超长
+	contentLength, err := elem.Text()
+	if err != nil {
+		return errors.Wrap(err, "获取正文长度文本失败")
+	}
+
+	return makeMaxLengthError(contentLength)
+}
+
+func makeMaxLengthError(elemText string) error {
+	parts := strings.Split(elemText, "/")
+	if len(parts) != 2 {
+		return errors.Errorf("长度超过限制: %s", elemText)
+	}
+
+	currLen, maxLen := parts[0], parts[1]
+
+	return errors.Errorf("当前输入长度为%s，最大长度为%s", currLen, maxLen)
+}
+
 // 查找内容输入框 - 使用Race方法处理两种样式
 func getContentElement(page *rod.Page) (*rod.Element, bool) {
 	var foundElement *rod.Element
@@ -510,39 +773,53 @@ func getContentElement(page *rod.Page) (*rod.Element, bool) {
 	return nil, false
 }
 
-func inputTags(contentElem *rod.Element, tags []string) {
+func inputTags(contentElem *rod.Element, tags []string) error {
 	if len(tags) == 0 {
-		return
+		return nil
 	}
 
 	time.Sleep(1 * time.Second)
 
 	for i := 0; i < 20; i++ {
-		contentElem.MustKeyActions().
-			Type(input.ArrowDown).
-			MustDo()
+		ka, err := contentElem.KeyActions()
+		if err != nil {
+			return errors.Wrap(err, "创建键盘操作失败")
+		}
+		if err := ka.Type(input.ArrowDown).Do(); err != nil {
+			return errors.Wrap(err, "按下方向键失败")
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	contentElem.MustKeyActions().
-		Press(input.Enter).
-		Press(input.Enter).
-		MustDo()
+	ka, err := contentElem.KeyActions()
+	if err != nil {
+		return errors.Wrap(err, "创建键盘操作失败")
+	}
+	if err := ka.Press(input.Enter).Press(input.Enter).Do(); err != nil {
+		return errors.Wrap(err, "按下回车键失败")
+	}
 
 	time.Sleep(1 * time.Second)
 
 	for _, tag := range tags {
 		tag = strings.TrimLeft(tag, "#")
-		inputTag(contentElem, tag)
+		if err := inputTag(contentElem, tag); err != nil {
+			return errors.Wrapf(err, "输入标签[%s]失败", tag)
+		}
 	}
+	return nil
 }
 
-func inputTag(contentElem *rod.Element, tag string) {
-	contentElem.MustInput("#")
+func inputTag(contentElem *rod.Element, tag string) error {
+	if err := contentElem.Input("#"); err != nil {
+		return errors.Wrap(err, "输入#失败")
+	}
 	time.Sleep(200 * time.Millisecond)
 
 	for _, char := range tag {
-		contentElem.MustInput(string(char))
+		if err := contentElem.Input(string(char)); err != nil {
+			return errors.Wrapf(err, "输入字符[%c]失败", char)
+		}
 		time.Sleep(50 * time.Millisecond)
 	}
 
@@ -550,24 +827,25 @@ func inputTag(contentElem *rod.Element, tag string) {
 
 	page := contentElem.Page()
 	topicContainer, err := page.Element("#creator-editor-topic-container")
-	if err == nil && topicContainer != nil {
-		firstItem, err := topicContainer.Element(".item")
-		if err == nil && firstItem != nil {
-			firstItem.MustClick()
-			slog.Info("成功点击标签联想选项", "tag", tag)
-			time.Sleep(200 * time.Millisecond)
-		} else {
-			slog.Warn("未找到标签联想选项，直接输入空格", "tag", tag)
-			// 如果没有找到联想选项，输入空格结束
-			contentElem.MustInput(" ")
-		}
-	} else {
+	if err != nil || topicContainer == nil {
 		slog.Warn("未找到标签联想下拉框，直接输入空格", "tag", tag)
-		// 如果没有找到下拉框，输入空格结束
-		contentElem.MustInput(" ")
+		return contentElem.Input(" ")
 	}
 
+	firstItem, err := topicContainer.Element(".item")
+	if err != nil || firstItem == nil {
+		slog.Warn("未找到标签联想选项，直接输入空格", "tag", tag)
+		return contentElem.Input(" ")
+	}
+
+	if err := firstItem.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return errors.Wrap(err, "点击标签联想选项失败")
+	}
+	slog.Info("成功点击标签联想选项", "tag", tag)
+	time.Sleep(200 * time.Millisecond)
+
 	time.Sleep(500 * time.Millisecond) // 等待标签处理完成
+	return nil
 }
 
 func findTextboxByPlaceholder(page *rod.Page) (*rod.Element, error) {
@@ -652,4 +930,55 @@ func isElementVisible(elem *rod.Element) bool {
 	}
 
 	return visible
+}
+
+// setSchedulePublish 设置定时发布时间
+func setSchedulePublish(page *rod.Page, t time.Time) error {
+	// 1. 点击定时发布开关
+	if err := clickScheduleSwitch(page); err != nil {
+		return err
+	}
+	time.Sleep(800 * time.Millisecond)
+
+	// 2. 设置日期时间
+	if err := setDateTime(page, t); err != nil {
+		return err
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	return nil
+}
+
+// clickScheduleSwitch 点击定时发布开关
+func clickScheduleSwitch(page *rod.Page) error {
+	switchElem, err := page.Element(".post-time-wrapper .d-switch")
+	if err != nil {
+		return errors.Wrap(err, "查找定时发布开关失败")
+	}
+
+	if err := switchElem.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return errors.Wrap(err, "点击定时发布开关失败")
+	}
+	slog.Info("已点击定时发布开关")
+	return nil
+}
+
+// setDateTime 设置日期时间
+func setDateTime(page *rod.Page, t time.Time) error {
+	dateTimeStr := t.Format("2006-01-02 15:04")
+
+	input, err := page.Element(".date-picker-container input")
+	if err != nil {
+		return errors.Wrap(err, "查找日期时间输入框失败")
+	}
+
+	if err := input.SelectAllText(); err != nil {
+		return errors.Wrap(err, "选择日期时间文本失败")
+	}
+	if err := input.Input(dateTimeStr); err != nil {
+		return errors.Wrap(err, "输入日期时间失败")
+	}
+	slog.Info("已设置日期时间", "datetime", dateTimeStr)
+
+	return nil
 }

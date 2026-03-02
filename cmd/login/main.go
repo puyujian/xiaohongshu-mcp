@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"os"
 
 	"github.com/go-rod/rod"
 	"github.com/sirupsen/logrus"
 	"github.com/xpzouying/xiaohongshu-mcp/browser"
+	"github.com/xpzouying/xiaohongshu-mcp/configs"
 	"github.com/xpzouying/xiaohongshu-mcp/cookies"
 	"github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
 )
@@ -15,12 +17,31 @@ import (
 func main() {
 	var (
 		binPath string // 浏览器二进制文件路径
+		proxy   string // 代理地址（可空）
 	)
 	flag.StringVar(&binPath, "bin", "", "浏览器二进制文件路径")
+	flag.StringVar(&proxy, "proxy", "", "代理地址，如 http://127.0.0.1:7890（可空）")
 	flag.Parse()
 
+	// 环境变量 fallback
+	if proxy == "" {
+		proxy = os.Getenv("BROWSER_PROXY")
+	}
+	if err := configs.ApplyProxyToEnv(proxy); err != nil {
+		logrus.Warnf("代理环境变量设置失败（将仅影响 Go 侧网络请求/浏览器下载）：%v", err)
+	}
+
 	// 登录的时候，需要界面，所以不能无头模式
-	b := browser.NewBrowser(false, browser.WithBinPath(binPath))
+	opts := []browser.Option{
+		browser.WithBinPath(binPath),
+	}
+	if proxy != "" {
+		opts = append(opts, browser.WithProxy(proxy))
+	}
+	b, err := browser.NewBrowser(false, opts...)
+	if err != nil {
+		logrus.Fatalf("failed to create browser: %v", err)
+	}
 	defer b.Close()
 
 	page := b.NewPage()

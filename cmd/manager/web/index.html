@@ -1,0 +1,2043 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>xiaohongshu-mcp 多用户管理</title>
+  <style>
+    :root { --bg:#0b1020; --card:#121a33; --text:#e8ecff; --muted:#9aa6d6; --ok:#22c55e; --bad:#ef4444; --line:#243057; --btn:#2b3a6a; --accent:#6366f1; }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "PingFang SC", "Microsoft YaHei", Arial; background:var(--bg); color:var(--text); }
+    .wrap { max-width: 1100px; margin: 18px auto; padding: 0 14px; }
+    .row { display:flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+    h1 { font-size: 18px; margin: 0 0 12px; }
+    .muted { color: var(--muted); font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px 8px; border-bottom: 1px solid var(--line); font-size: 13px; vertical-align: top; }
+    th { text-align: left; color: var(--muted); font-weight: 600; }
+    .badge { display:inline-flex; align-items:center; gap:6px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); font-size: 12px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display:inline-block; }
+    .dot.ok { background: var(--ok); }
+    .dot.bad { background: var(--bad); }
+    button { background: var(--btn); border: 1px solid var(--line); color: var(--text); padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button.primary { background: var(--accent); border-color: var(--accent); }
+    input, select, textarea { background: #0e1630; border: 1px solid var(--line); color: var(--text); padding: 8px 10px; border-radius: 8px; font-size: 13px; width: 240px; }
+    textarea { font-family: monospace; resize: vertical; }
+    .w120 { width: 120px; }
+    .w200 { width: 200px; }
+    .w100p { width: 100%; box-sizing: border-box; }
+    .right { margin-left: auto; }
+    .err { color: #ffb4b4; font-size: 12px; white-space: pre-wrap; }
+    .link { color: #c7d2fe; text-decoration: none; }
+    .modal { position: fixed; inset: 0; display: none; background: rgba(0,0,0,.55); overflow-y: auto; }
+    .modal.show { display: block; }
+    .modal .panel { width: min(800px, calc(100% - 24px)); margin: 5vh auto; }
+    .grid { display:grid; grid-template-columns: 140px 1fr; gap: 10px; align-items: center; }
+    .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+    .tabs button { border: none; border-radius: 8px 8px 0 0; background: transparent; padding: 8px 16px; }
+    .tabs button.active { background: var(--btn); border: 1px solid var(--line); border-bottom: none; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .qr-container { text-align: center; padding: 20px; }
+    .qr-container img { max-width: 200px; border-radius: 8px; }
+    .status-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+    .json-output { background: #0a0f1a; border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; }
+    .tool-select { margin-bottom: 12px; }
+    .tool-desc { color: var(--muted); font-size: 12px; margin: 4px 0 12px; }
+    /* 动态表单样式 */
+    .tool-form { display: flex; flex-direction: column; gap: 10px; }
+    .tool-field { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: #0e1630; }
+    .tool-field-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+    .tool-field-name { font-weight: 700; }
+    .tool-field-type { color: var(--muted); font-size: 11px; font-family: monospace; }
+    .tool-field-desc { color: var(--muted); font-size: 12px; margin-top: 4px; white-space: pre-wrap; }
+    .tool-field-ctrl { margin-top: 8px; }
+    .tool-field input, .tool-field select, .tool-field textarea { width: 100%; box-sizing: border-box; }
+    .tag { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); font-size: 12px; }
+    .tag.req { border-color: #7f1d1d; color: #fecaca; background: rgba(239, 68, 68, .10); }
+    .tag.opt { border-color: var(--line); color: var(--muted); background: rgba(154, 166, 214, .06); }
+    .switch { display: flex; align-items: center; gap: 10px; }
+    .switch input[type="checkbox"] { width: 18px; height: 18px; }
+    .preview-section { margin-top: 12px; }
+    .preview-title { margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+    .toggle-json { font-size: 11px; cursor: pointer; color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="row">
+        <div>
+          <h1>xiaohongshu-mcp 多用户管理</h1>
+          <div class="muted">通过 Web 界面管理多个用户进程</div>
+        </div>
+        <div class="right row">
+          <button id="btnAdd">添加用户</button>
+          <button id="btnStartAll" class="primary">批量启动</button>
+          <button id="btnStopAll">批量停止</button>
+          <button id="btnLogsManager">日志管理</button>
+          <button id="btnRefresh">刷新</button>
+        </div>
+      </div>
+      <div class="muted" id="globalInfo"></div>
+      <div class="err" id="globalErr"></div>
+    </div>
+
+    <div class="card" style="margin-top: 12px;">
+      <table>
+        <thead>
+          <tr>
+            <th>用户</th>
+            <th>端口</th>
+            <th>代理</th>
+            <th>User-Agent</th>
+            <th>状态</th>
+            <th>链接</th>
+            <th>路径</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 用户配置 Modal -->
+  <div class="modal" id="modal">
+    <div class="panel card">
+      <div class="row">
+        <h1 style="margin:0;">用户配置</h1>
+        <div class="right">
+          <button id="btnClose">关闭</button>
+        </div>
+      </div>
+      <div class="grid" style="margin-top: 12px;">
+        <div class="muted">id</div>
+        <input id="fId" placeholder="例如 u1" />
+        <div class="muted">port</div>
+        <input id="fPort" class="w120" placeholder="例如 18061" />
+        <div class="muted">proxy</div>
+        <input id="fProxy" class="w200" placeholder="例如 http://user:pass@127.0.0.1:7890（可空）" />
+      </div>
+      <div class="row" style="margin-top: 12px;">
+        <button id="btnSave">保存</button>
+        <button id="btnCancel">取消</button>
+        <div class="right err" id="formErr"></div>
+      </div>
+      <div class="muted" style="margin-top: 8px;">说明：用户运行中不允许编辑/删除，请先停止。</div>
+    </div>
+  </div>
+
+  <!-- 调试 Modal -->
+  <div class="modal" id="debugModal">
+    <div class="panel card">
+      <div class="row">
+        <h1 style="margin:0;">调试面板 - <span id="debugUserId"></span></h1>
+        <div class="right row">
+          <button id="btnDebugRefresh">刷新状态</button>
+          <button id="btnDebugClose">关闭</button>
+        </div>
+      </div>
+
+      <div class="status-row" id="debugStatus"></div>
+
+      <div class="tabs">
+        <button class="active" data-tab="login">登录</button>
+        <button data-tab="flow">可视化调试</button>
+        <button data-tab="cookies">Cookies</button>
+        <button data-tab="mcp">MCP工具</button>
+        <button data-tab="logs">日志</button>
+      </div>
+
+      <!-- 登录 Tab -->
+      <div class="tab-content active" id="tab-login">
+        <div class="row" style="margin-bottom: 12px;">
+          <button id="btnGetQRCode" class="primary">获取登录二维码</button>
+          <label class="switch" style="margin-left: 12px;">
+            <input type="checkbox" id="toggleBrowserView" />
+            <span class="muted">显示浏览器视图 (实验性)</span>
+          </label>
+          <span class="muted" id="loginStatusText">未检查</span>
+        </div>
+        <div class="qr-container" id="qrContainer" style="display:none;">
+          <img id="qrImage" src="" alt="登录二维码" />
+          <div class="muted" id="qrTimeout"></div>
+        </div>
+        <div id="browserViewContainer" style="display:none; margin-top: 12px;">
+          <div class="row" style="margin-bottom:8px;">
+            <input id="browserInput" autocomplete="off" placeholder="输入文字/验证码..." style="width:200px;" />
+            <button id="btnBrowserInput">发送文字</button>
+            <button id="btnBrowserRefresh">强制刷新</button>
+          </div>
+          <div style="position:relative; border:1px solid var(--line); border-radius:8px; display:inline-block; max-width: 100%; overflow: hidden; background:#000;">
+            <img id="browserScreen" draggable="false" style="max-width:100%; cursor:crosshair; display:block; user-select:none;" alt="浏览器截图" />
+            <div id="clickFeedback" style="position:absolute; width:16px; height:16px; border-radius:50%; background:rgba(255,0,0,0.7); pointer-events:none; display:none; transform: translate(-50%, -50%); box-shadow: 0 0 8px rgba(255,0,0,0.5);"></div>
+          </div>
+          <div class="muted" style="margin-top:4px;">点击画面可发送点击事件，用于处理二次验证</div>
+        </div>
+        <div class="err" id="loginErr"></div>
+      </div>
+
+      <!-- 可视化调试 Tab -->
+      <div class="tab-content" id="tab-flow">
+        <div class="muted" style="margin-bottom: 8px;">用于发布流程调试：展示步骤、网络请求/响应、控制台日志，并支持暂停/继续。</div>
+        <div class="row" style="margin-bottom: 12px;">
+          <button id="btnFlowRefreshSessions" class="primary">刷新会话</button>
+          <select id="flowSessionSelect" class="w200">
+            <option value="">-- 暂无会话 --</option>
+          </select>
+          <button id="btnFlowPause">暂停</button>
+          <label class="switch" style="margin-left: 12px;">
+            <input type="checkbox" id="autoRefreshFlow" />
+            <span class="muted">自动刷新 (1秒)</span>
+          </label>
+          <button id="btnFlowClear">清空显示</button>
+        </div>
+        <div class="muted" id="flowStatusText">未选择会话</div>
+        <div class="err" id="flowErr"></div>
+
+        <div id="flowBrowserViewContainer" style="margin-top: 12px;">
+          <div class="row" style="margin-bottom:8px;">
+            <input id="flowBrowserInput" autocomplete="off" placeholder="输入文字/验证码..." style="width:200px;" />
+            <button id="btnFlowBrowserInput">发送文字</button>
+            <button id="btnFlowBrowserRefresh">刷新截图</button>
+          </div>
+          <div style="position:relative; border:1px solid var(--line); border-radius:8px; display:inline-block; max-width: 100%; overflow: hidden; background:#000;">
+            <img id="flowBrowserScreen" draggable="false" style="max-width:100%; cursor:crosshair; display:block; user-select:none;" alt="浏览器截图" />
+            <div id="flowClickFeedback" style="position:absolute; width:16px; height:16px; border-radius:50%; background:rgba(255,0,0,0.7); pointer-events:none; display:none; transform: translate(-50%, -50%); box-shadow: 0 0 8px rgba(255,0,0,0.5);"></div>
+          </div>
+          <div class="muted" style="margin-top:4px;">点击画面可发送点击事件（用于验证码/弹窗等）。</div>
+        </div>
+
+        <div class="row" style="margin-top: 12px; align-items: flex-start;">
+          <div style="flex: 1; min-width: 260px;">
+            <div class="muted" style="margin-bottom: 4px;">步骤/状态</div>
+            <pre id="flowSteps" class="json-output" style="max-height: 220px; white-space: pre-wrap; word-break: break-all;">暂无</pre>
+          </div>
+          <div style="flex: 1; min-width: 260px;">
+            <div class="muted" style="margin-bottom: 4px;">控制台日志</div>
+            <pre id="flowConsole" class="json-output" style="max-height: 220px; white-space: pre-wrap; word-break: break-all;">暂无</pre>
+          </div>
+        </div>
+
+        <div style="margin-top: 12px;">
+          <div class="row" style="margin-bottom: 8px;">
+            <div class="muted">网络请求</div>
+            <input id="flowNetFilter" autocomplete="off" placeholder="过滤：URL/方法/状态..." style="width:240px;" />
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 70px;">方法</th>
+                <th style="width: 60px;">状态</th>
+                <th>URL</th>
+                <th style="width: 70px;">类型</th>
+              </tr>
+            </thead>
+            <tbody id="flowNetTbody"></tbody>
+          </table>
+          <div class="muted" style="margin-top: 8px;">网络详情（点击上方某条请求查看）</div>
+          <pre id="flowNetDetail" class="json-output" style="max-height: 260px; white-space: pre-wrap; word-break: break-all;">请选择一条请求</pre>
+        </div>
+      </div>
+
+      <!-- Cookies Tab -->
+      <div class="tab-content" id="tab-cookies">
+        <div class="row" style="margin-bottom: 12px;">
+          <button id="btnRefreshCookies">刷新Cookie状态</button>
+          <button id="btnImportCookies" class="primary">导入Cookie</button>
+          <button id="btnClearCookies" style="background:#dc2626;">清除Cookies</button>
+          <input id="cookieFileInput" type="file" accept="application/json,.json" style="display:none;" />
+        </div>
+        <div class="muted" style="margin-bottom: 8px;">提示：可从老版本的 cookies.json 文件导入</div>
+        <div id="cookieInfo" class="json-output">点击"刷新Cookie状态"查看</div>
+        <div class="err" id="cookieErr"></div>
+      </div>
+
+      <!-- MCP工具 Tab -->
+      <div class="tab-content" id="tab-mcp">
+        <div class="tool-select">
+          <div class="row" style="margin-bottom: 8px;">
+            <button id="btnLoadTools">加载工具列表</button>
+          </div>
+          <select id="toolSelect" class="w100p" style="margin-bottom: 8px;">
+            <option value="">-- 请先加载工具列表 --</option>
+          </select>
+          <div class="tool-desc" id="toolDesc"></div>
+        </div>
+        <!-- 动态生成的参数表单 -->
+        <div class="row" style="margin-bottom: 8px;">
+          <div class="muted">参数（根据 Schema 自动生成）</div>
+          <div class="right row" style="gap:8px;">
+            <button id="btnResetToolArgs">重置默认值</button>
+            <span class="toggle-json" id="toggleJsonMode">切换到JSON模式</span>
+          </div>
+        </div>
+        <div id="toolArgsForm" class="tool-form"></div>
+        <textarea id="toolArgsJson" class="w100p" rows="6" style="display:none; font-family:monospace;" placeholder='{"key": "value"}'></textarea>
+        <div class="err" id="toolArgsErr"></div>
+        <!-- JSON预览 -->
+        <div class="preview-section">
+          <div class="preview-title">
+            <span class="muted">将提交的 JSON:</span>
+          </div>
+          <div id="toolArgsPreview" class="json-output" style="max-height:150px;">请选择工具</div>
+        </div>
+        <div class="row" style="margin: 12px 0;">
+          <button id="btnCallTool" class="primary">调用工具</button>
+          <span class="muted">超时: 30秒</span>
+        </div>
+        <div class="muted" style="margin-bottom: 4px;">结果:</div>
+        <div id="toolResult" class="json-output">调用结果将显示在这里</div>
+        <div class="err" id="mcpErr"></div>
+      </div>
+
+      <!-- 日志 Tab -->
+      <div class="tab-content" id="tab-logs">
+        <div class="row" style="margin-bottom: 12px;">
+          <button id="btnRefreshLogs" class="primary">刷新日志</button>
+          <label class="switch" style="margin-left: 12px;">
+            <input type="checkbox" id="autoRefreshLogs" />
+            <span class="muted">自动刷新 (3秒)</span>
+          </label>
+          <select id="logLines" class="w120" style="margin-left: 12px;">
+            <option value="100">最后100行</option>
+            <option value="200" selected>最后200行</option>
+            <option value="500">最后500行</option>
+            <option value="1000">最后1000行</option>
+          </select>
+        </div>
+        <div id="logInfo" class="muted" style="margin-bottom: 8px;"></div>
+        <pre id="logContent" class="json-output" style="max-height: 500px; white-space: pre-wrap; word-break: break-all;">点击"刷新日志"查看运行日志</pre>
+        <div class="err" id="logErr"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 日志管理 Modal -->
+  <div class="modal" id="logsModal">
+    <div class="panel card" style="width: min(980px, calc(100% - 24px));">
+      <div class="row">
+        <h1 style="margin:0;">日志管理</h1>
+        <div class="right row">
+          <button id="btnLogsRefresh" class="primary">刷新</button>
+          <button id="btnLogsClose">关闭</button>
+        </div>
+      </div>
+
+      <div class="muted" id="logsInfo" style="margin-top: 8px;"></div>
+      <div class="err" id="logsErr"></div>
+
+      <div style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>用户ID</th>
+              <th>日志文件</th>
+              <th>大小</th>
+              <th>更新时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="logsTbody"></tbody>
+        </table>
+      </div>
+
+      <!-- 查看日志子面板 -->
+      <div id="logViewer" style="margin-top: 14px; display:none;">
+        <div class="row" style="margin-bottom: 8px;">
+          <div class="muted">查看日志 - <b id="logViewerUser"></b></div>
+          <div class="right row" style="gap:8px;">
+            <select id="logViewerLines" class="w120">
+              <option value="100">最后100行</option>
+              <option value="200" selected>最后200行</option>
+              <option value="500">最后500行</option>
+              <option value="1000">最后1000行</option>
+            </select>
+            <button id="btnLogViewerRefresh" class="primary">刷新内容</button>
+            <button id="btnLogViewerClose">收起</button>
+          </div>
+        </div>
+        <div id="logViewerMeta" class="muted" style="margin-bottom: 8px;"></div>
+        <pre id="logViewerContent" class="json-output" style="max-height: 420px; white-space: pre-wrap; word-break: break-all;">点击"查看"加载日志</pre>
+        <div class="err" id="logViewerErr"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = '/api/admin/v1';
+    const tbody = document.getElementById('tbody');
+    const globalInfo = document.getElementById('globalInfo');
+    const globalErr = document.getElementById('globalErr');
+
+    // 用户配置 Modal
+    const modal = document.getElementById('modal');
+    const fId = document.getElementById('fId');
+    const fPort = document.getElementById('fPort');
+    const fProxy = document.getElementById('fProxy');
+    const formErr = document.getElementById('formErr');
+    let editingId = null;
+
+    // 调试 Modal
+    const debugModal = document.getElementById('debugModal');
+    let currentDebugUser = null;
+    let loginPollTimer = null;
+    let browserPollTimer = null;
+    let logRefreshTimer = null;
+    let flowPollTimer = null;
+    let currentFlowSessionId = null;
+    let flowLastSeq = 0;
+    let flowNetById = new Map();
+    let flowNetOrder = [];
+    let flowStepLines = [];
+    let flowConsoleLines = [];
+    let flowLastSessionsRefreshAt = 0;
+    let toolsCache = [];
+    // 动态表单相关状态
+    let currentTool = null;
+    let toolArgEls = new Map();  // 存储每个字段的input元素引用
+    let isJsonMode = false;      // 是否处于JSON编辑模式
+
+    // 日志管理 Modal
+    const logsModal = document.getElementById('logsModal');
+    const logsTbody = document.getElementById('logsTbody');
+    const logsInfo = document.getElementById('logsInfo');
+    const logsErr = document.getElementById('logsErr');
+    const logViewer = document.getElementById('logViewer');
+    const logViewerUser = document.getElementById('logViewerUser');
+    const logViewerMeta = document.getElementById('logViewerMeta');
+    const logViewerContent = document.getElementById('logViewerContent');
+    const logViewerErr = document.getElementById('logViewerErr');
+    let currentLogViewerUserID = null;
+
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    async function api(method, path, body) {
+      const opt = { method, headers: {} };
+      if (body !== undefined) {
+        opt.headers['Content-Type'] = 'application/json';
+        opt.body = JSON.stringify(body);
+      }
+      const res = await fetch(API + path, opt);
+      if (!res.ok) {
+        let msg = '';
+        try { msg = (await res.json()).error || ''; } catch(e) {}
+        throw new Error(msg || (method + ' ' + path + ' 失败: HTTP ' + res.status));
+      }
+      return res.status === 204 || res.status === 201 ? null : await res.json();
+    }
+
+    // 格式化字节大小
+    function fmtBytes(n) {
+      const v = Number(n || 0);
+      if (!isFinite(v) || v <= 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let idx = 0;
+      let cur = v;
+      while (cur >= 1024 && idx < units.length - 1) {
+        cur /= 1024;
+        idx++;
+      }
+      const fixed = idx === 0 ? 0 : 2;
+      return cur.toFixed(fixed) + ' ' + units[idx];
+    }
+
+    // ========== 日志管理 Modal 函数 ==========
+    function openLogsModal() {
+      logsErr.textContent = '';
+      logsInfo.textContent = '';
+      logsModal.classList.add('show');
+      hideLogViewer();
+      refreshLogsOverview();
+    }
+
+    function closeLogsModal() {
+      logsModal.classList.remove('show');
+      hideLogViewer();
+    }
+
+    function hideLogViewer() {
+      currentLogViewerUserID = null;
+      logViewer.style.display = 'none';
+      logViewerUser.textContent = '';
+      logViewerMeta.textContent = '';
+      logViewerContent.textContent = '点击"查看"加载日志';
+      logViewerErr.textContent = '';
+    }
+
+    async function refreshLogsOverview() {
+      logsErr.textContent = '';
+      try {
+        const data = await api('GET', '/logs');
+        const items = data.items || [];
+        logsInfo.textContent = `data_dir=${data.data_dir || ''}（共 ${items.length} 个用户）`;
+        renderLogsOverview(items);
+      } catch (e) {
+        logsErr.textContent = e.message;
+      }
+    }
+
+    function renderLogsOverview(items) {
+      logsTbody.innerHTML = items.map(it => {
+        const sizeText = it.exists ? fmtBytes(it.size_bytes) : '-';
+        const mtimeText = it.exists && it.mtime ? it.mtime : '-';
+        const dlDis = it.exists ? '' : 'disabled';
+        const clearDis = it.exists ? '' : 'disabled';
+        return `
+          <tr>
+            <td><b>${esc(it.user_id)}</b>${it.exists ? '' : '<div class="muted">无日志</div>'}</td>
+            <td class="muted">${esc(it.log_file || '-')}</td>
+            <td class="muted">${esc(sizeText)}</td>
+            <td class="muted">${esc(mtimeText)}</td>
+            <td class="row" style="gap:8px;">
+              <button data-act="view" data-id="${esc(it.user_id)}">查看</button>
+              <button data-act="download" data-id="${esc(it.user_id)}" ${dlDis}>下载</button>
+              <button data-act="clear" data-id="${esc(it.user_id)}" ${clearDis} style="background:#dc2626;">清空</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function openLogViewer(userID) {
+      currentLogViewerUserID = userID;
+      logViewerUser.textContent = userID;
+      logViewerMeta.textContent = '';
+      logViewerErr.textContent = '';
+      logViewerContent.textContent = '加载中...';
+      logViewer.style.display = 'block';
+      await refreshLogViewer();
+    }
+
+    async function refreshLogViewer() {
+      if (!currentLogViewerUserID) return;
+      logViewerErr.textContent = '';
+      const lines = document.getElementById('logViewerLines').value;
+      try {
+        const data = await api('GET', `/users/${encodeURIComponent(currentLogViewerUserID)}/debug/logs?lines=${lines}`);
+        if (!data.exists) {
+          logViewerMeta.textContent = `路径: ${data.log_file || '-'}`;
+          logViewerContent.textContent = '日志文件不存在';
+          return;
+        }
+        const totalInfo = data.total_lines >= 0 ? `总行数 ${data.total_lines}` : '大文件模式';
+        const truncInfo = data.truncated ? `（显示最后${data.lines}行）` : '';
+        logViewerMeta.textContent = `路径: ${data.log_file} | 大小: ${fmtBytes(data.size_bytes)} | ${totalInfo} ${truncInfo}`;
+        logViewerContent.textContent = data.content || '(空日志)';
+        logViewerContent.scrollTop = logViewerContent.scrollHeight;
+      } catch (e) {
+        logViewerErr.textContent = e.message;
+      }
+    }
+
+    async function clearUserLog(userID) {
+      if (!confirm(`确认清空用户 ${userID} 的日志？`)) return;
+      logsErr.textContent = '';
+      try {
+        await api('DELETE', `/users/${encodeURIComponent(userID)}/debug/logs`);
+        await refreshLogsOverview();
+        if (currentLogViewerUserID === userID) {
+          await refreshLogViewer();
+        }
+      } catch (e) {
+        logsErr.textContent = e.message;
+      }
+    }
+
+    function downloadUserLog(userID) {
+      const url = API + `/users/${encodeURIComponent(userID)}/debug/logs/download`;
+      window.open(url, '_blank');
+    }
+
+    // ========== 用户配置 Modal 函数 ==========
+    function openModal(user) {
+      formErr.textContent = '';
+      modal.classList.add('show');
+      if (user) {
+        editingId = user.id;
+        fId.value = user.id;
+        fId.disabled = true;
+        fPort.value = user.port;
+        fProxy.value = user.proxy || '';
+      } else {
+        editingId = null;
+        fId.value = '';
+        fId.disabled = false;
+        fPort.value = '';
+        fProxy.value = '';
+      }
+    }
+    function closeModal() {
+      modal.classList.remove('show');
+    }
+
+    // 调试 Modal 函数
+    function openDebugModal(user) {
+      currentDebugUser = user;
+      document.getElementById('debugUserId').textContent = user.id;
+      debugModal.classList.add('show');
+
+      // 清理之前的轮询定时器
+      if (loginPollTimer) {
+        clearInterval(loginPollTimer);
+        loginPollTimer = null;
+      }
+      if (browserPollTimer) {
+        clearInterval(browserPollTimer);
+        browserPollTimer = null;
+      }
+      if (logRefreshTimer) {
+        clearInterval(logRefreshTimer);
+        logRefreshTimer = null;
+      }
+
+      // 重置状态
+      document.getElementById('qrContainer').style.display = 'none';
+      document.getElementById('toggleBrowserView').checked = false;
+      document.getElementById('browserViewContainer').style.display = 'none';
+      document.getElementById('loginErr').textContent = '';
+      document.getElementById('cookieErr').textContent = '';
+      document.getElementById('mcpErr').textContent = '';
+      document.getElementById('logErr').textContent = '';
+      document.getElementById('logContent').textContent = '点击"刷新日志"查看运行日志';
+      document.getElementById('logInfo').textContent = '';
+      document.getElementById('autoRefreshLogs').checked = false;
+      document.getElementById('toolResult').textContent = '调用结果将显示在这里';
+      document.getElementById('toolSelect').innerHTML = '<option value="">-- 请先加载工具列表 --</option>';
+      document.getElementById('toolDesc').textContent = '';
+      toolsCache = [];
+      // 重置动态表单状态
+      currentTool = null;
+      toolArgEls = new Map();
+      isJsonMode = false;
+      document.getElementById('toolArgsForm').innerHTML = '';
+      document.getElementById('toolArgsJson').style.display = 'none';
+      document.getElementById('toolArgsErr').textContent = '';
+      document.getElementById('toolArgsPreview').textContent = '请选择工具';
+      document.getElementById('toggleJsonMode').textContent = '切换到JSON模式';
+
+      // 重置可视化调试（发布流程）状态
+      stopFlowPolling();
+      currentFlowSessionId = null;
+      flowLastSeq = 0;
+      flowNetById = new Map();
+      flowNetOrder = [];
+      flowStepLines = [];
+      flowConsoleLines = [];
+      flowLastSessionsRefreshAt = 0;
+      document.getElementById('flowSessionSelect').innerHTML = '<option value="">-- 暂无会话 --</option>';
+      document.getElementById('btnFlowPause').disabled = true;
+      document.getElementById('autoRefreshFlow').checked = false;
+      document.getElementById('flowStatusText').textContent = '未选择会话';
+      document.getElementById('flowErr').textContent = '';
+      document.getElementById('flowSteps').textContent = '暂无';
+      document.getElementById('flowConsole').textContent = '暂无';
+      document.getElementById('flowNetTbody').innerHTML = '';
+      document.getElementById('flowNetDetail').textContent = '请选择一条请求';
+      document.getElementById('flowNetFilter').value = '';
+      document.getElementById('flowBrowserInput').value = '';
+      document.getElementById('flowBrowserScreen').removeAttribute('src');
+
+      // 切换到第一个tab
+      switchTab('login');
+
+      // 刷新状态
+      refreshDebugStatus();
+    }
+
+    function closeDebugModal() {
+      debugModal.classList.remove('show');
+      currentDebugUser = null;
+      if (loginPollTimer) {
+        clearInterval(loginPollTimer);
+        loginPollTimer = null;
+      }
+      if (browserPollTimer) {
+        clearInterval(browserPollTimer);
+        browserPollTimer = null;
+      }
+      if (logRefreshTimer) {
+        clearInterval(logRefreshTimer);
+        logRefreshTimer = null;
+      }
+      stopFlowPolling();
+    }
+
+    async function refreshDebugStatus() {
+      if (!currentDebugUser) return;
+      const statusEl = document.getElementById('debugStatus');
+      try {
+        const data = await api('GET', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/summary`);
+        const runningBadge = data.user.running
+          ? `<span class="badge"><span class="dot ${data.user.health_ok ? 'ok' : 'bad'}"></span>运行中</span>`
+          : `<span class="badge"><span class="dot bad"></span>已停止</span>`;
+        const loginBadge = data.login.is_logged_in
+          ? `<span class="badge"><span class="dot ok"></span>已登录: ${esc(data.login.username)}</span>`
+          : `<span class="badge"><span class="dot bad"></span>未登录</span>`;
+        const cookieBadge = data.cookies.exists
+          ? `<span class="badge">Cookies: ${data.cookies.count}条</span>`
+          : `<span class="badge">无Cookies</span>`;
+        statusEl.innerHTML = runningBadge + loginBadge + cookieBadge;
+
+        document.getElementById('loginStatusText').textContent = data.login.is_logged_in ? '已登录' : '未登录';
+      } catch (e) {
+        statusEl.innerHTML = `<span class="err">${esc(e.message)}</span>`;
+      }
+    }
+
+    function switchTab(tabName) {
+      document.querySelectorAll('.tabs button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabName);
+      });
+      document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.toggle('active', content.id === 'tab-' + tabName);
+      });
+
+      // Tab 进入/离开钩子
+      if (tabName === 'flow') {
+        enterFlowTab();
+      } else {
+        stopFlowPolling();
+      }
+    }
+
+    // 登录相关
+    async function getQRCode() {
+      if (!currentDebugUser) return;
+      const errEl = document.getElementById('loginErr');
+      const containerEl = document.getElementById('qrContainer');
+      const imgEl = document.getElementById('qrImage');
+      const timeoutEl = document.getElementById('qrTimeout');
+
+      errEl.textContent = '';
+      containerEl.style.display = 'none';
+
+      try {
+        const data = await api('GET', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/login/qrcode`);
+        if (data.data && data.data.img) {
+          imgEl.src = data.data.img;
+          timeoutEl.textContent = `有效期: ${data.data.timeout || '未知'}`;
+          containerEl.style.display = 'block';
+
+          // 开始轮询登录状态
+          startLoginPoll();
+        } else if (data.data && data.data.is_logged_in) {
+          errEl.textContent = '已经登录，无需扫码';
+          refreshDebugStatus();
+        } else {
+          errEl.textContent = '获取二维码失败: ' + JSON.stringify(data);
+        }
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    function startLoginPoll() {
+      if (loginPollTimer) clearInterval(loginPollTimer);
+      loginPollTimer = setInterval(async () => {
+        if (!currentDebugUser) {
+          clearInterval(loginPollTimer);
+          return;
+        }
+        try {
+          const data = await api('GET', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/login/status`);
+          if (data.data && data.data.is_logged_in) {
+            clearInterval(loginPollTimer);
+            loginPollTimer = null;
+            document.getElementById('qrContainer').style.display = 'none';
+            document.getElementById('loginStatusText').textContent = '登录成功!';
+            refreshDebugStatus();
+          }
+        } catch (e) {
+          // 忽略轮询错误
+        }
+      }, 2000);
+    }
+
+    // 浏览器视图相关
+    function toggleBrowserView() {
+      const show = document.getElementById('toggleBrowserView').checked;
+      const container = document.getElementById('browserViewContainer');
+      container.style.display = show ? 'block' : 'none';
+
+      if (browserPollTimer) {
+        clearInterval(browserPollTimer);
+        browserPollTimer = null;
+      }
+
+      if (show && currentDebugUser) {
+        refreshBrowserScreen();
+        browserPollTimer = setInterval(refreshBrowserScreen, 1500);
+      }
+    }
+
+    function refreshBrowserScreen() {
+      if (!currentDebugUser) return;
+      const img = document.getElementById('browserScreen');
+      // 添加时间戳防止缓存
+      img.src = `${API}/users/${encodeURIComponent(currentDebugUser.id)}/debug/login/browser/screenshot?t=${Date.now()}`;
+    }
+
+    async function sendBrowserAction(type, data) {
+      if (!currentDebugUser) return;
+      try {
+        await api('POST', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/login/browser/action`, {
+          type, ...data
+        });
+        // 操作后立即刷新截图
+        setTimeout(refreshBrowserScreen, 300);
+      } catch (e) {
+        console.error('Browser action failed', e);
+        document.getElementById('loginErr').textContent = '操作失败: ' + e.message;
+      }
+    }
+
+    function handleBrowserScreenClick(e) {
+      const img = e.target;
+      const rect = img.getBoundingClientRect();
+      // 计算点击位置相对于图片元素的坐标
+      const clientX = e.clientX - rect.left;
+      const clientY = e.clientY - rect.top;
+
+      // 映射到实际图片尺寸（浏览器坐标）
+      if (img.naturalWidth && img.clientWidth) {
+        const x = (clientX / img.clientWidth) * img.naturalWidth;
+        const y = (clientY / img.clientHeight) * img.naturalHeight;
+
+        // 视觉反馈
+        const dot = document.getElementById('clickFeedback');
+        dot.style.left = clientX + 'px';
+        dot.style.top = clientY + 'px';
+        dot.style.display = 'block';
+        setTimeout(() => dot.style.display = 'none', 400);
+
+        sendBrowserAction('click', { x, y });
+      }
+    }
+
+    function sendBrowserInput() {
+      const input = document.getElementById('browserInput');
+      const text = input.value;
+      if (!text) return;
+      sendBrowserAction('input', { text });
+      input.value = ''; // 发送后清空
+    }
+
+    // 可视化调试（发布流程）相关
+    let flowPolling = false;
+    let flowSessionMeta = null;
+
+    function shortId(id) {
+      if (!id) return '';
+      return id.length > 6 ? id.slice(-6) : id;
+    }
+
+    function shortTime(ts) {
+      if (!ts) return '';
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
+      const t = d.toLocaleTimeString('zh-CN', { hour12: false });
+      const ms = String(d.getMilliseconds()).padStart(3, '0');
+      return `${t}.${ms}`;
+    }
+
+    function stopFlowPolling() {
+      if (flowPollTimer) {
+        clearInterval(flowPollTimer);
+        flowPollTimer = null;
+      }
+      flowPolling = false;
+    }
+
+    async function enterFlowTab() {
+      if (!currentDebugUser) return;
+      // 进入时先刷新一次会话与数据
+      await refreshFlowSessions();
+      await pollFlowOnce();
+      // 如果用户勾选自动刷新，则启动定时器
+      if (document.getElementById('autoRefreshFlow').checked) {
+        startFlowPolling();
+      }
+    }
+
+    function startFlowPolling() {
+      stopFlowPolling();
+      flowPollTimer = setInterval(() => {
+        // 避免并发 tick
+        if (flowPolling) return;
+        pollFlowTick();
+      }, 1000);
+    }
+
+    async function pollFlowTick() {
+      if (!currentDebugUser || !currentFlowSessionId) return;
+      flowPolling = true;
+      try {
+        // 会话列表不需要每秒刷新，做个简单节流
+        const now = Date.now();
+        if (now - flowLastSessionsRefreshAt > 5000) {
+          await refreshFlowSessions();
+        }
+        await pollFlowOnce();
+      } finally {
+        flowPolling = false;
+      }
+    }
+
+    async function refreshFlowSessions() {
+      if (!currentDebugUser) return;
+      const errEl = document.getElementById('flowErr');
+      errEl.textContent = '';
+      try {
+        const resp = await api('GET', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/flow/sessions`);
+        flowLastSessionsRefreshAt = Date.now();
+        const sessions = (resp && resp.sessions) ? resp.sessions : [];
+
+        const sel = document.getElementById('flowSessionSelect');
+        const prev = currentFlowSessionId;
+
+        if (!sessions.length) {
+          sel.innerHTML = '<option value="">-- 暂无会话 --</option>';
+          document.getElementById('btnFlowPause').disabled = true;
+          currentFlowSessionId = null;
+          flowSessionMeta = null;
+          document.getElementById('flowStatusText').textContent = '暂无会话（请先触发一次发布）';
+          return;
+        }
+
+        sel.innerHTML = sessions.map(s => {
+          const label = `#${shortId(s.id)} ${s.kind || '-'} | ${s.status || '-'}${s.paused ? '(暂停)' : ''} | ${shortTime(s.started_at)}`;
+          return `<option value="${esc(s.id)}">${esc(label)}</option>`;
+        }).join('');
+
+        // 选择策略：优先保持原会话；否则选择最新的 running/paused；否则选择第一条
+        const ids = new Set(sessions.map(x => x.id));
+        let next = prev && ids.has(prev) ? prev : null;
+        if (!next) {
+          const running = sessions.find(x => x.status === 'running' || x.status === 'paused');
+          next = (running && running.id) ? running.id : sessions[0].id;
+        }
+
+        sel.value = next;
+        if (next && next !== prev) {
+          selectFlowSession(next);
+        }
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    function selectFlowSession(sid) {
+      currentFlowSessionId = sid || null;
+      flowLastSeq = 0;
+      flowSessionMeta = null;
+      flowNetById = new Map();
+      flowNetOrder = [];
+      flowStepLines = [];
+      flowConsoleLines = [];
+
+      document.getElementById('flowErr').textContent = '';
+      document.getElementById('flowSteps').textContent = '加载中...';
+      document.getElementById('flowConsole').textContent = '加载中...';
+      document.getElementById('flowNetTbody').innerHTML = '';
+      document.getElementById('flowNetDetail').textContent = '请选择一条请求';
+      document.getElementById('btnFlowPause').disabled = !currentFlowSessionId;
+
+      refreshFlowScreenshot();
+      pollFlowOnce();
+    }
+
+    function appendLine(arr, line, max) {
+      arr.push(line);
+      if (arr.length > max) arr.splice(0, arr.length - max);
+    }
+
+    function formatEventLine(ev) {
+      const t = shortTime(ev.time);
+      const ty = (ev.type || '').toUpperCase();
+      const lv = ev.level ? `(${ev.level})` : '';
+      const data = ev.data ? safeStringify(ev.data) : '';
+      return `[${t}] ${ty}${lv} ${ev.message || ''}${data ? ' ' + data : ''}`;
+    }
+
+    async function pollFlowOnce() {
+      if (!currentDebugUser || !currentFlowSessionId) return;
+
+      const statusEl = document.getElementById('flowStatusText');
+      const errEl = document.getElementById('flowErr');
+      errEl.textContent = '';
+
+      try {
+        const resp = await api('GET', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/flow/sessions/${encodeURIComponent(currentFlowSessionId)}/stream?since=${flowLastSeq}&limit=800`);
+        const meta = resp && resp.session ? resp.session : null;
+        flowSessionMeta = meta;
+
+        if (meta) {
+          const base = `会话 #${shortId(meta.id)} | ${meta.kind || '-'} | 状态: ${meta.status || '-'}${meta.paused ? '(暂停)' : ''} | 开始: ${shortTime(meta.started_at)}${meta.ended_at ? ' | 结束: ' + shortTime(meta.ended_at) : ''}`;
+          statusEl.textContent = base;
+
+          const btnPause = document.getElementById('btnFlowPause');
+          if (meta.status === 'running') {
+            btnPause.disabled = false;
+            btnPause.textContent = '暂停';
+          } else if (meta.status === 'paused' || meta.paused) {
+            btnPause.disabled = false;
+            btnPause.textContent = '继续';
+          } else {
+            btnPause.disabled = true;
+            btnPause.textContent = meta.status === 'done' ? '已完成' : '已结束';
+          }
+
+          if (meta.error) {
+            errEl.textContent = meta.error_more ? (meta.error + '\n\n' + meta.error_more) : meta.error;
+          }
+        }
+
+        const events = (resp && resp.events) ? resp.events : [];
+        if (events.length) {
+          for (const ev of events) {
+            const type = ev.type || '';
+            if (type === 'step' || type === 'log' || type === 'status' || type === 'error') {
+              appendLine(flowStepLines, formatEventLine(ev), 400);
+              if (type === 'error' && !errEl.textContent) {
+                errEl.textContent = ev.data && ev.data.detail ? (ev.message + '\n\n' + ev.data.detail) : (ev.message || '发生错误');
+              }
+            } else if (type.startsWith('console')) {
+              appendLine(flowConsoleLines, formatEventLine(ev), 400);
+            } else if (type.startsWith('network.')) {
+              applyNetEvent(ev);
+            }
+          }
+          document.getElementById('flowSteps').textContent = flowStepLines.length ? flowStepLines.join('\n') : '暂无';
+          document.getElementById('flowConsole').textContent = flowConsoleLines.length ? flowConsoleLines.join('\n') : '暂无';
+          renderFlowNetTable();
+        }
+
+        if (resp && typeof resp.last_seq === 'number') {
+          flowLastSeq = resp.last_seq;
+        }
+        if (resp && resp.dropped) {
+          appendLine(flowStepLines, `[${shortTime(new Date().toISOString())}] WARN 事件过多已裁剪，建议刷新会话或清空显示`, 400);
+          document.getElementById('flowSteps').textContent = flowStepLines.join('\n');
+        }
+
+        refreshFlowScreenshot();
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    function refreshFlowScreenshot() {
+      if (!currentDebugUser || !currentFlowSessionId) return;
+      const img = document.getElementById('flowBrowserScreen');
+      img.style.display = 'block';
+      img.onerror = () => { img.style.display = 'none'; };
+      img.src = `${API}/users/${encodeURIComponent(currentDebugUser.id)}/debug/flow/sessions/${encodeURIComponent(currentFlowSessionId)}/browser/screenshot?t=${Date.now()}`;
+    }
+
+    async function sendFlowBrowserAction(type, data) {
+      if (!currentDebugUser || !currentFlowSessionId) return;
+      const errEl = document.getElementById('flowErr');
+      errEl.textContent = '';
+      try {
+        await api('POST', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/flow/sessions/${encodeURIComponent(currentFlowSessionId)}/browser/action`, {
+          type, ...data
+        });
+        setTimeout(refreshFlowScreenshot, 300);
+      } catch (e) {
+        errEl.textContent = '操作失败: ' + e.message;
+      }
+    }
+
+    function handleFlowBrowserScreenClick(e) {
+      const img = e.target;
+      const rect = img.getBoundingClientRect();
+      const clientX = e.clientX - rect.left;
+      const clientY = e.clientY - rect.top;
+
+      if (img.naturalWidth && img.clientWidth) {
+        const x = (clientX / img.clientWidth) * img.naturalWidth;
+        const y = (clientY / img.clientHeight) * img.naturalHeight;
+
+        const dot = document.getElementById('flowClickFeedback');
+        dot.style.left = clientX + 'px';
+        dot.style.top = clientY + 'px';
+        dot.style.display = 'block';
+        setTimeout(() => dot.style.display = 'none', 400);
+
+        sendFlowBrowserAction('click', { x, y });
+      }
+    }
+
+    function sendFlowBrowserInput() {
+      const input = document.getElementById('flowBrowserInput');
+      const text = input.value;
+      if (!text) return;
+      sendFlowBrowserAction('input', { text });
+      input.value = '';
+    }
+
+    async function toggleFlowPause() {
+      if (!currentDebugUser || !currentFlowSessionId) return;
+      const errEl = document.getElementById('flowErr');
+      errEl.textContent = '';
+
+      const paused = flowSessionMeta && (flowSessionMeta.paused || flowSessionMeta.status === 'paused');
+      const action = paused ? 'resume' : 'pause';
+
+      try {
+        await api('POST', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/flow/sessions/${encodeURIComponent(currentFlowSessionId)}/control`, { action });
+        await pollFlowOnce();
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    function clearFlowDisplay() {
+      flowStepLines = [];
+      flowConsoleLines = [];
+      flowNetById = new Map();
+      flowNetOrder = [];
+      document.getElementById('flowSteps').textContent = '已清空';
+      document.getElementById('flowConsole').textContent = '已清空';
+      document.getElementById('flowNetTbody').innerHTML = '';
+      document.getElementById('flowNetDetail').textContent = '请选择一条请求';
+    }
+
+    function applyNetEvent(ev) {
+      const data = ev.data || {};
+      const id = data.request_id || data.requestId || '';
+      if (!id) return;
+
+      let item = flowNetById.get(id);
+      if (!item) {
+        item = { id };
+        flowNetById.set(id, item);
+        flowNetOrder.push(id);
+        if (flowNetOrder.length > 500) {
+          const drop = flowNetOrder.splice(0, flowNetOrder.length - 500);
+          drop.forEach(did => flowNetById.delete(did));
+        }
+      }
+
+      item.last_seq = ev.seq;
+      item.last_time = ev.time;
+
+      if (ev.type === 'network.request') item.request = data;
+      if (ev.type === 'network.response') item.response = data;
+      if (ev.type === 'network.body') item.body = data;
+      if (ev.type === 'network.failed') item.failed = { message: ev.message, ...data };
+    }
+
+    function renderFlowNetTable() {
+      const tbody = document.getElementById('flowNetTbody');
+      const filter = (document.getElementById('flowNetFilter').value || '').trim().toLowerCase();
+
+      const ids = flowNetOrder.slice(-160).reverse();
+      const rows = [];
+      for (const id of ids) {
+        const it = flowNetById.get(id);
+        if (!it) continue;
+        const method = (it.request && it.request.method) ? it.request.method : (it.response && it.response.method) ? it.response.method : '-';
+        const url = (it.request && it.request.url) ? it.request.url : (it.response && it.response.url) ? it.response.url : '-';
+        const status = (it.response && typeof it.response.status === 'number') ? it.response.status : (it.failed ? 'ERR' : '-');
+        const type = (it.request && it.request.type) ? it.request.type : (it.response && it.response.type) ? it.response.type : '-';
+
+        const hay = `${method} ${status} ${type} ${url}`.toLowerCase();
+        if (filter && !hay.includes(filter)) continue;
+
+        rows.push(
+          `<tr data-net-id="${esc(id)}" style="cursor:pointer;">` +
+          `<td>${esc(String(method))}</td>` +
+          `<td>${esc(String(status))}</td>` +
+          `<td>${esc(String(url))}</td>` +
+          `<td>${esc(String(type))}</td>` +
+          `</tr>`
+        );
+      }
+      tbody.innerHTML = rows.join('') || `<tr><td colspan="4" class="muted">暂无</td></tr>`;
+    }
+
+    function onFlowNetRowClick(e) {
+      const tr = e.target && e.target.closest ? e.target.closest('tr[data-net-id]') : null;
+      if (!tr) return;
+      const id = tr.dataset.netId;
+      const it = flowNetById.get(id);
+      if (!it) return;
+      document.getElementById('flowNetDetail').textContent = JSON.stringify(it, null, 2);
+    }
+
+    // Cookies相关
+    async function refreshCookies() {
+      if (!currentDebugUser) return;
+      const infoEl = document.getElementById('cookieInfo');
+      const errEl = document.getElementById('cookieErr');
+      errEl.textContent = '';
+
+      try {
+        const data = await api('GET', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/cookies`);
+        infoEl.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    async function clearCookies() {
+      if (!currentDebugUser) return;
+      if (!confirm('确认清除该用户的所有Cookies？这将导致需要重新登录。')) return;
+
+      const errEl = document.getElementById('cookieErr');
+      errEl.textContent = '';
+
+      try {
+        const data = await api('DELETE', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/cookies`);
+        alert(data.message || '清除成功');
+        refreshCookies();
+        refreshDebugStatus();
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    // 导入Cookie文件
+    async function importCookiesFromFile(file) {
+      if (!currentDebugUser) return;
+      const errEl = document.getElementById('cookieErr');
+      const btnImport = document.getElementById('btnImportCookies');
+      errEl.textContent = '';
+
+      // 文件大小预检查（5MB）
+      const maxSize = 5 * 1024 * 1024;
+      if (file.size > maxSize) {
+        errEl.textContent = '文件过大（最大 5MB）';
+        return;
+      }
+
+      // 禁用按钮防止重复点击
+      btnImport.disabled = true;
+      btnImport.textContent = '导入中...';
+
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        if (!Array.isArray(parsed)) {
+          throw new Error('Cookie 文件格式错误：根节点必须是 JSON 数组');
+        }
+
+        const resp = await api('POST', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/cookies/import`, parsed);
+        alert(resp.message || '导入成功');
+        refreshCookies();
+        refreshDebugStatus();
+      } catch (e) {
+        errEl.textContent = e.message;
+      } finally {
+        btnImport.disabled = false;
+        btnImport.textContent = '导入Cookie';
+      }
+    }
+
+    function onCookieFileSelected(ev) {
+      const input = ev.target;
+      const file = input && input.files && input.files[0];
+      if (!file) return;
+      input.value = ''; // 允许重复选择同一文件
+      importCookiesFromFile(file);
+    }
+
+    // 日志相关
+    async function refreshLogs() {
+      if (!currentDebugUser) return;
+      const contentEl = document.getElementById('logContent');
+      const infoEl = document.getElementById('logInfo');
+      const errEl = document.getElementById('logErr');
+      const lines = document.getElementById('logLines').value;
+
+      errEl.textContent = '';
+
+      try {
+        const data = await api('GET', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/logs?lines=${lines}`);
+        if (!data.exists) {
+          contentEl.textContent = '日志文件不存在';
+          infoEl.textContent = `路径: ${data.log_file}`;
+          return;
+        }
+        const sizeKB = (data.size_bytes / 1024).toFixed(2);
+        const totalInfo = data.total_lines >= 0 ? `总行数: ${data.total_lines}` : '大文件模式';
+        const truncInfo = data.truncated ? ` (显示最后${data.lines}行)` : '';
+        infoEl.textContent = `路径: ${data.log_file} | 大小: ${sizeKB} KB | ${totalInfo}${truncInfo}`;
+        contentEl.textContent = data.content || '(空日志)';
+        // 滚动到底部
+        contentEl.scrollTop = contentEl.scrollHeight;
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    function toggleAutoRefreshLogs() {
+      const checked = document.getElementById('autoRefreshLogs').checked;
+      if (checked) {
+        refreshLogs();
+        logRefreshTimer = setInterval(refreshLogs, 3000);
+      } else {
+        if (logRefreshTimer) {
+          clearInterval(logRefreshTimer);
+          logRefreshTimer = null;
+        }
+      }
+    }
+
+    // MCP工具相关 - 辅助函数
+    function getPropType(prop) {
+      if (!prop) return 'string';
+      if (Array.isArray(prop.type)) return prop.type[0] || 'string';
+      return prop.type || 'string';
+    }
+
+    function safeStringify(v) {
+      try { return JSON.stringify(v); } catch (e) { return String(v); }
+    }
+
+    // 清空表单UI
+    function clearToolArgsUI(msg) {
+      toolArgEls = new Map();
+      document.getElementById('toolArgsForm').innerHTML = '';
+      document.getElementById('toolArgsErr').textContent = '';
+      document.getElementById('toolArgsPreview').textContent = msg || '';
+    }
+
+    // 从表单收集参数
+    function collectArgsFromForm(schema, strict) {
+      const args = {};
+      const errors = [];
+      const props = (schema && schema.type === 'object' && schema.properties) ? schema.properties : null;
+      const requiredSet = new Set(Array.isArray(schema?.required) ? schema.required : []);
+
+      if (!props) return { args, errors };
+
+      for (const [key, prop] of Object.entries(props)) {
+        const el = toolArgEls.get(key);
+        if (!el) continue;
+
+        const t = getPropType(prop);
+        const isRequired = requiredSet.has(key);
+        const hasEnum = Array.isArray(prop?.enum);
+
+        // enum 类型特殊处理 - 保持原始类型
+        if (hasEnum) {
+          const raw = (el.value ?? '').trim();
+          if (raw === '') {
+            if (isRequired) errors.push(`${key} 为必填参数`);
+            continue;
+          }
+          // 从原始enum中找到匹配的值，保持原始类型
+          const matchedVal = prop.enum.find(v => String(v) === raw);
+          if (matchedVal !== undefined) {
+            args[key] = matchedVal;
+          } else {
+            args[key] = raw; // fallback
+          }
+          continue;
+        }
+
+        // boolean 类型
+        if (t === 'boolean') {
+          const v = !!el.checked;
+          // 选填且为默认值时跳过
+          if (!isRequired && v === (prop?.default ?? false)) continue;
+          args[key] = v;
+          continue;
+        }
+
+        // integer/number 类型
+        if (t === 'integer' || t === 'number') {
+          const raw = (el.value ?? '').trim();
+          if (raw === '') {
+            if (isRequired) errors.push(`${key} 为必填参数`);
+            continue;
+          }
+          const n = Number(raw);
+          if (!Number.isFinite(n)) {
+            errors.push(`${key} 不是有效的数字`);
+            continue;
+          }
+          // integer需要额外校验是否为整数
+          if (t === 'integer' && !Number.isInteger(n)) {
+            errors.push(`${key} 必须是整数，不能是小数`);
+            continue;
+          }
+          // 校验范围约束
+          if (prop?.minimum !== undefined && n < prop.minimum) {
+            errors.push(`${key} 不能小于 ${prop.minimum}`);
+            continue;
+          }
+          if (prop?.maximum !== undefined && n > prop.maximum) {
+            errors.push(`${key} 不能大于 ${prop.maximum}`);
+            continue;
+          }
+          args[key] = n;
+          continue;
+        }
+
+        // object/array 类型 (需要解析JSON)
+        if (t === 'object' || t === 'array') {
+          const raw = (el.value ?? '').trim();
+          if (raw === '') {
+            if (isRequired) errors.push(`${key} 为必填参数`);
+            continue;
+          }
+          try {
+            const parsed = JSON.parse(raw);
+            if (t === 'object' && (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null)) {
+              errors.push(`${key} 需要是 JSON 对象（例如 {}）`);
+              continue;
+            }
+            if (t === 'array' && !Array.isArray(parsed)) {
+              errors.push(`${key} 需要是 JSON 数组（例如 []）`);
+              continue;
+            }
+            args[key] = parsed;
+          } catch (e) {
+            errors.push(`${key} 的 JSON 解析失败: ${e.message}`);
+          }
+          continue;
+        }
+
+        // string/enum 和其他类型
+        const raw = (el.value ?? '');
+        const val = raw.trim();
+        if (val === '') {
+          if (isRequired) errors.push(`${key} 为必填参数`);
+          continue;
+        }
+        // 校验字符串长度约束
+        if (prop?.minLength !== undefined && val.length < prop.minLength) {
+          errors.push(`${key} 长度不能小于 ${prop.minLength}`);
+          continue;
+        }
+        if (prop?.maxLength !== undefined && val.length > prop.maxLength) {
+          errors.push(`${key} 长度不能大于 ${prop.maxLength}`);
+          continue;
+        }
+        args[key] = val;
+      }
+
+      if (strict && errors.length) throw new Error(errors.join('\n'));
+      return { args, errors };
+    }
+
+    // 更新JSON预览
+    function updateToolArgsPreview() {
+      if (!currentTool) {
+        clearToolArgsUI('请选择工具');
+        return;
+      }
+      if (isJsonMode) {
+        // JSON模式：直接显示textarea内容
+        const jsonEl = document.getElementById('toolArgsJson');
+        try {
+          const parsed = JSON.parse(jsonEl.value || '{}');
+          document.getElementById('toolArgsPreview').textContent = JSON.stringify(parsed, null, 2);
+          document.getElementById('toolArgsErr').textContent = '';
+        } catch (e) {
+          document.getElementById('toolArgsErr').textContent = 'JSON格式错误: ' + e.message;
+        }
+        return;
+      }
+      const { args, errors } = collectArgsFromForm(currentTool.input_schema, false);
+      document.getElementById('toolArgsPreview').textContent = JSON.stringify(args, null, 2);
+      document.getElementById('toolArgsErr').textContent = errors.length ? errors.join('\n') : '';
+    }
+
+    // 填充默认值
+    function fillToolArgsDefaults(schema) {
+      const props = (schema && schema.type === 'object' && schema.properties) ? schema.properties : null;
+      if (!props) return;
+
+      for (const [key, prop] of Object.entries(props)) {
+        const el = toolArgEls.get(key);
+        if (!el) continue;
+
+        const t = getPropType(prop);
+        const def = prop?.default;
+
+        if (t === 'boolean') {
+          el.checked = def ?? false;
+        } else if (t === 'integer' || t === 'number') {
+          el.value = (def !== undefined && def !== null) ? String(def) : '';
+        } else if (t === 'object' || t === 'array') {
+          el.value = (def !== undefined) ? JSON.stringify(def, null, 2) : '';
+        } else {
+          el.value = (def !== undefined && def !== null) ? String(def) : '';
+        }
+      }
+    }
+
+    // 渲染动态表单
+    function renderToolArgsForm(schema) {
+      const formEl = document.getElementById('toolArgsForm');
+      const errEl = document.getElementById('toolArgsErr');
+      const previewEl = document.getElementById('toolArgsPreview');
+
+      toolArgEls = new Map();
+      formEl.innerHTML = '';
+      errEl.textContent = '';
+
+      // 检查schema是否有效
+      if (!schema || schema.type !== 'object' || !schema.properties || Object.keys(schema.properties).length === 0) {
+        formEl.innerHTML = '<div class="muted">该工具不需要参数</div>';
+        previewEl.textContent = '{}';
+        return;
+      }
+
+      // 检查是否有复杂的schema特性（anyOf/oneOf/allOf/$ref等）
+      const hasComplexFeatures = schema.anyOf || schema.oneOf || schema.allOf || schema.$ref ||
+        Object.values(schema.properties).some(p => p?.anyOf || p?.oneOf || p?.allOf || p?.$ref);
+      if (hasComplexFeatures) {
+        formEl.innerHTML = '<div class="muted" style="color:#fbbf24;">⚠️ 该工具的参数结构较复杂，建议使用"JSON模式"进行编辑</div>';
+      }
+
+      const requiredSet = new Set(Array.isArray(schema.required) ? schema.required : []);
+      const entries = Object.entries(schema.properties);
+      // 必填参数排在前面
+      entries.sort((a, b) => {
+        const ar = requiredSet.has(a[0]) ? 0 : 1;
+        const br = requiredSet.has(b[0]) ? 0 : 1;
+        if (ar !== br) return ar - br;
+        return a[0].localeCompare(b[0], 'zh-CN');
+      });
+
+      for (const [key, prop] of entries) {
+        const t = getPropType(prop);
+        const isRequired = requiredSet.has(key);
+        const hasEnum = Array.isArray(prop?.enum);
+
+        // 创建字段容器
+        const field = document.createElement('div');
+        field.className = 'tool-field';
+
+        // 头部：名称 + 标签
+        const head = document.createElement('div');
+        head.className = 'tool-field-head';
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'tool-field-name';
+        nameEl.textContent = key;
+
+        const typeEl = document.createElement('span');
+        typeEl.className = 'tool-field-type';
+        typeEl.textContent = hasEnum ? 'enum' : t;
+
+        const tag = document.createElement('span');
+        tag.className = 'tag ' + (isRequired ? 'req' : 'opt');
+        tag.textContent = isRequired ? '必填' : '选填';
+
+        head.appendChild(nameEl);
+        head.appendChild(typeEl);
+        head.appendChild(tag);
+        field.appendChild(head);
+
+        // 描述
+        const desc = document.createElement('div');
+        desc.className = 'tool-field-desc';
+        const parts = [];
+        if (prop?.description) parts.push(prop.description);
+        if (prop?.default !== undefined) parts.push(`默认值: ${safeStringify(prop.default)}`);
+        if (hasEnum) parts.push(`可选值: ${prop.enum.map(safeStringify).join(' | ')}`);
+        desc.textContent = parts.join('\n');
+        field.appendChild(desc);
+
+        // 输入控件
+        const ctrlWrap = document.createElement('div');
+        ctrlWrap.className = 'tool-field-ctrl';
+
+        let input;
+        if (hasEnum) {
+          // enum 类型使用下拉框
+          input = document.createElement('select');
+          const emptyOpt = document.createElement('option');
+          emptyOpt.value = '';
+          emptyOpt.textContent = '-- 请选择 --';
+          input.appendChild(emptyOpt);
+          for (const v of prop.enum) {
+            const opt = document.createElement('option');
+            opt.value = String(v);
+            opt.textContent = String(v);
+            input.appendChild(opt);
+          }
+          ctrlWrap.appendChild(input);
+        } else if (t === 'boolean') {
+          // boolean 使用开关
+          const wrap = document.createElement('div');
+          wrap.className = 'switch';
+          input = document.createElement('input');
+          input.type = 'checkbox';
+          const tip = document.createElement('span');
+          tip.className = 'muted';
+          tip.textContent = '开启 / 关闭';
+          wrap.appendChild(input);
+          wrap.appendChild(tip);
+          ctrlWrap.appendChild(wrap);
+        } else if (t === 'integer' || t === 'number') {
+          // 数字输入
+          input = document.createElement('input');
+          input.type = 'number';
+          input.step = (t === 'integer') ? '1' : 'any';
+          if (prop?.minimum !== undefined) input.min = String(prop.minimum);
+          if (prop?.maximum !== undefined) input.max = String(prop.maximum);
+          if (prop?.default !== undefined) input.placeholder = `默认: ${prop.default}`;
+          ctrlWrap.appendChild(input);
+        } else if (t === 'object' || t === 'array') {
+          // object/array 使用 textarea
+          input = document.createElement('textarea');
+          input.rows = 3;
+          input.placeholder = (t === 'array') ? '[]' : '{}';
+          input.style.fontFamily = 'monospace';
+          ctrlWrap.appendChild(input);
+        } else {
+          // string 和其他类型
+          input = document.createElement('input');
+          input.type = 'text';
+          if (prop?.default !== undefined) input.placeholder = `默认: ${prop.default}`;
+          if (prop?.minLength !== undefined) input.minLength = prop.minLength;
+          if (prop?.maxLength !== undefined) input.maxLength = prop.maxLength;
+          ctrlWrap.appendChild(input);
+        }
+
+        field.appendChild(ctrlWrap);
+        toolArgEls.set(key, input);
+
+        // 绑定实时更新
+        input.addEventListener('input', updateToolArgsPreview);
+        input.addEventListener('change', updateToolArgsPreview);
+
+        formEl.appendChild(field);
+      }
+
+      fillToolArgsDefaults(schema);
+      updateToolArgsPreview();
+    }
+
+    // 切换JSON模式
+    function toggleJsonMode() {
+      const formEl = document.getElementById('toolArgsForm');
+      const jsonEl = document.getElementById('toolArgsJson');
+      const toggleEl = document.getElementById('toggleJsonMode');
+
+      if (!currentTool) return;
+
+      if (isJsonMode) {
+        // 从JSON模式切换到表单模式
+        isJsonMode = false;
+        formEl.style.display = '';
+        jsonEl.style.display = 'none';
+        toggleEl.textContent = '切换到JSON模式';
+        // 先重置表单到默认值，再用JSON内容覆盖
+        fillToolArgsDefaults(currentTool.input_schema);
+        try {
+          const parsed = JSON.parse(jsonEl.value || '{}');
+          const schema = currentTool.input_schema;
+          if (schema?.properties) {
+            for (const [key, val] of Object.entries(parsed)) {
+              const el = toolArgEls.get(key);
+              if (!el) continue;
+              const prop = schema.properties[key];
+              const t = getPropType(prop);
+              if (t === 'boolean') {
+                el.checked = !!val;
+              } else if (t === 'object' || t === 'array') {
+                el.value = JSON.stringify(val, null, 2);
+              } else {
+                el.value = val !== undefined && val !== null ? String(val) : '';
+              }
+            }
+          }
+        } catch (e) { /* 忽略解析错误，保持默认值 */ }
+        updateToolArgsPreview();
+      } else {
+        // 从表单模式切换到JSON模式
+        isJsonMode = true;
+        formEl.style.display = 'none';
+        jsonEl.style.display = '';
+        toggleEl.textContent = '切换到表单模式';
+        // 将表单内容同步到JSON
+        const { args } = collectArgsFromForm(currentTool.input_schema, false);
+        jsonEl.value = JSON.stringify(args, null, 2);
+        updateToolArgsPreview();
+      }
+    }
+
+    // 根据schema生成默认值对象
+    function getDefaultArgs(schema) {
+      const args = {};
+      const props = (schema && schema.type === 'object' && schema.properties) ? schema.properties : null;
+      if (!props) return args;
+      for (const [key, prop] of Object.entries(props)) {
+        if (prop?.default !== undefined) {
+          args[key] = prop.default;
+        }
+      }
+      return args;
+    }
+
+    // 重置参数到默认值
+    function resetToolArgs() {
+      if (!currentTool) return;
+      if (isJsonMode) {
+        // JSON模式：生成默认值JSON
+        const defaultArgs = getDefaultArgs(currentTool.input_schema);
+        document.getElementById('toolArgsJson').value = JSON.stringify(defaultArgs, null, 2);
+      }
+      fillToolArgsDefaults(currentTool.input_schema);
+      updateToolArgsPreview();
+    }
+
+    async function loadTools() {
+      if (!currentDebugUser) return;
+      const selectEl = document.getElementById('toolSelect');
+      const errEl = document.getElementById('mcpErr');
+      errEl.textContent = '';
+
+      try {
+        const data = await api('GET', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/mcp/tools`);
+        toolsCache = data.tools || [];
+        selectEl.innerHTML = '<option value="">-- 选择工具 --</option>';
+        toolsCache.forEach(tool => {
+          const opt = document.createElement('option');
+          opt.value = tool.name;
+          opt.textContent = tool.name;
+          selectEl.appendChild(opt);
+        });
+        currentTool = null;
+        clearToolArgsUI('请选择工具');
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    function onToolSelect() {
+      const name = document.getElementById('toolSelect').value;
+      const descEl = document.getElementById('toolDesc');
+
+      const tool = toolsCache.find(t => t.name === name);
+      if (tool) {
+        currentTool = tool;
+        descEl.textContent = tool.description || '无描述';
+        // 重置模式为表单模式
+        isJsonMode = false;
+        document.getElementById('toolArgsForm').style.display = '';
+        document.getElementById('toolArgsJson').style.display = 'none';
+        document.getElementById('toggleJsonMode').textContent = '切换到JSON模式';
+        renderToolArgsForm(tool.input_schema);
+      } else {
+        currentTool = null;
+        descEl.textContent = '';
+        clearToolArgsUI('请选择工具');
+      }
+    }
+
+    async function callTool() {
+      if (!currentDebugUser) return;
+      const name = document.getElementById('toolSelect').value;
+      const resultEl = document.getElementById('toolResult');
+      const errEl = document.getElementById('mcpErr');
+
+      if (!name) {
+        errEl.textContent = '请选择工具';
+        return;
+      }
+
+      errEl.textContent = '';
+      document.getElementById('toolArgsErr').textContent = '';
+      resultEl.textContent = '调用中...';
+
+      let args = {};
+      try {
+        if (isJsonMode) {
+          args = JSON.parse(document.getElementById('toolArgsJson').value || '{}');
+        } else {
+          const tool = currentTool?.name === name ? currentTool : toolsCache.find(t => t.name === name);
+          if (!tool) throw new Error('工具不存在');
+          const out = collectArgsFromForm(tool.input_schema, true);
+          args = out.args;
+        }
+      } catch (e) {
+        document.getElementById('toolArgsErr').textContent = e.message;
+        errEl.textContent = '参数校验失败，请检查必填项与类型';
+        resultEl.textContent = '';
+        return;
+      }
+
+      try {
+        const data = await api('POST', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/mcp/call`, {
+          name: name,
+          arguments: args,
+          timeout_ms: 30000
+        });
+        resultEl.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        errEl.textContent = e.message;
+        resultEl.textContent = '调用失败';
+      }
+    }
+
+    async function refresh() {
+      globalErr.textContent = '';
+      try {
+        const data = await api('GET', '/users');
+        globalInfo.textContent = `bin=${data.bin} headless=${data.headless} data_dir=${data.data_dir}  （每 2 秒刷新一次）`;
+        render(data.users || []);
+      } catch (e) {
+        globalErr.textContent = e.message;
+      }
+    }
+
+    function render(users) {
+      tbody.innerHTML = users.map(u => {
+        const badge = u.running
+          ? `<span class="badge"><span class="dot ${u.health_ok ? 'ok':'bad'}"></span>运行中 pid=${u.pid || '-'}${u.health_ok ? '' : '（health 异常）'}</span>`
+          : `<span class="badge"><span class="dot bad"></span>已停止</span>`;
+        const ops = u.running
+          ? `<button data-act="stop" data-id="${esc(u.id)}">停止</button>`
+          : `<button data-act="start" data-id="${esc(u.id)}">启动</button>`;
+        const dis = u.running ? 'disabled' : '';
+        const url = u.url ? `<a class="link" href="${esc(u.url)}" target="_blank">${esc(u.url)}</a>` : '-';
+        // UA 显示：截断过长的 UA
+        const uaFull = u.user_agent || '(未设置)';
+        const uaShort = uaFull.length > 50 ? uaFull.substring(0, 50) + '...' : uaFull;
+        const uaDisplay = uaFull === '(未设置)'
+          ? `<span style="color:#fbbf24;">${esc(uaShort)}</span>`
+          : `<span title="${esc(uaFull)}">${esc(uaShort)}</span>`;
+        return `
+          <tr>
+            <td><b>${esc(u.id)}</b>${u.last_error ? `<div class="muted">last_error: ${esc(u.last_error)}</div>` : ''}</td>
+            <td>${esc(u.port)}</td>
+            <td class="muted">${esc(u.proxy || '')}</td>
+            <td class="muted" style="max-width:180px; word-break:break-all; font-size:11px;">${uaDisplay}</td>
+            <td>${badge}${u.started_at ? `<div class="muted">started_at: ${esc(u.started_at)}</div>` : ''}</td>
+            <td class="muted">${url}<div class="muted">/mcp /api/v1 /health</div></td>
+            <td class="muted">
+              cookies: ${esc(u.cookies_path)}<br/>
+              profile: ${esc(u.user_data_dir)}<br/>
+              log: ${esc(u.log_file)}
+            </td>
+            <td class="row" style="gap:8px; flex-wrap:wrap;">
+              ${ops}
+              <button data-act="debug" data-id="${esc(u.id)}" class="primary">调试</button>
+              <button data-act="reset-ua" data-id="${esc(u.id)}" ${dis} title="重新生成随机 UA">重置UA</button>
+              <button data-act="edit" data-id="${esc(u.id)}" ${dis}>编辑</button>
+              <button data-act="del" data-id="${esc(u.id)}" ${dis}>删除</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    tbody.addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('button');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      const id = btn.dataset.id;
+      if (!act || !id) return;
+
+      try {
+        if (act === 'start') await api('POST', `/users/${encodeURIComponent(id)}/start`);
+        if (act === 'stop') await api('POST', `/users/${encodeURIComponent(id)}/stop`);
+        if (act === 'del') {
+          if (!confirm(`确认删除用户 ${id}？`)) return;
+          await api('DELETE', `/users/${encodeURIComponent(id)}`);
+        }
+        if (act === 'reset-ua') {
+          if (!confirm(`确认重置用户 ${id} 的 User-Agent？\n将生成新的随机 UA，下次启动生效。`)) return;
+          const resp = await api('POST', `/users/${encodeURIComponent(id)}/reset-ua`);
+          alert(`${resp.message}\n\n新 UA:\n${resp.user_agent}`);
+        }
+        if (act === 'edit') {
+          const data = await api('GET', '/users');
+          const u = (data.users || []).find(x => x.id === id);
+          if (!u) throw new Error('用户不存在');
+          openModal(u);
+          return;
+        }
+        if (act === 'debug') {
+          const data = await api('GET', '/users');
+          const u = (data.users || []).find(x => x.id === id);
+          if (!u) throw new Error('用户不存在');
+          openDebugModal(u);
+          return;
+        }
+        await refresh();
+      } catch (e) {
+        alert(e.message);
+      }
+    });
+
+    // 批量操作函数
+    async function batchStartAll() {
+      const btn = document.getElementById('btnStartAll');
+      btn.disabled = true;
+      btn.textContent = '启动中...';
+      globalErr.textContent = '';
+      try {
+        const resp = await api('POST', '/users/batch/start', { ids: [] });
+        const bad = (resp.results || []).filter(x => x.status === 'error' || x.status === 'not_found');
+        const summary = resp.summary || {};
+        if (bad.length) {
+          alert(`批量启动完成\n请求: ${summary.requested || 0}, 成功启动: ${summary.started || 0}\n\n部分失败:\n` + bad.map(x => `${x.id}: ${x.error || x.status}`).join('\n'));
+        } else {
+          globalInfo.textContent = `批量启动完成: 请求 ${summary.requested || 0}, 成功 ${summary.started || 0}`;
+        }
+        await refresh();
+      } catch (e) {
+        globalErr.textContent = e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '批量启动';
+      }
+    }
+
+    async function batchStopAll() {
+      if (!confirm('确认批量停止全部用户？')) return;
+      const btn = document.getElementById('btnStopAll');
+      btn.disabled = true;
+      btn.textContent = '停止中...';
+      globalErr.textContent = '';
+      try {
+        const resp = await api('POST', '/users/batch/stop', { ids: [] });
+        const bad = (resp.results || []).filter(x => x.status === 'error' || x.status === 'not_found');
+        const summary = resp.summary || {};
+        if (bad.length) {
+          alert(`批量停止完成\n请求: ${summary.requested || 0}, 已停止: ${summary.stopped || 0}\n\n部分失败:\n` + bad.map(x => `${x.id}: ${x.error || x.status}`).join('\n'));
+        } else {
+          globalInfo.textContent = `批量停止完成: 请求 ${summary.requested || 0}, 已停止 ${summary.stopped || 0}`;
+        }
+        await refresh();
+      } catch (e) {
+        globalErr.textContent = e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '批量停止';
+      }
+    }
+
+    // 用户配置 Modal 事件
+    document.getElementById('btnAdd').addEventListener('click', () => openModal(null));
+    document.getElementById('btnStartAll').addEventListener('click', batchStartAll);
+    document.getElementById('btnStopAll').addEventListener('click', batchStopAll);
+    document.getElementById('btnLogsManager').addEventListener('click', openLogsModal);
+    document.getElementById('btnRefresh').addEventListener('click', refresh);
+    document.getElementById('btnClose').addEventListener('click', closeModal);
+    document.getElementById('btnCancel').addEventListener('click', closeModal);
+
+    document.getElementById('btnSave').addEventListener('click', async () => {
+      formErr.textContent = '';
+      const id = (fId.value || '').trim();
+      const port = parseInt((fPort.value || '').trim(), 10);
+      const proxy = (fProxy.value || '').trim();
+      try {
+        if (!id) throw new Error('id 不能为空');
+        if (!port || port <= 0) throw new Error('port 非法');
+        if (editingId) {
+          await api('PUT', `/users/${encodeURIComponent(editingId)}`, { port, proxy });
+        } else {
+          await api('POST', '/users', { id, port, proxy });
+        }
+        closeModal();
+        await refresh();
+      } catch (e) {
+        formErr.textContent = e.message;
+      }
+    });
+
+    // 调试 Modal 事件
+    document.getElementById('btnDebugClose').addEventListener('click', closeDebugModal);
+    document.getElementById('btnDebugRefresh').addEventListener('click', refreshDebugStatus);
+
+    document.querySelectorAll('.tabs button').forEach(btn => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+
+    document.getElementById('btnGetQRCode').addEventListener('click', getQRCode);
+    document.getElementById('toggleBrowserView').addEventListener('change', toggleBrowserView);
+    document.getElementById('browserScreen').addEventListener('click', handleBrowserScreenClick);
+    document.getElementById('btnBrowserInput').addEventListener('click', sendBrowserInput);
+    document.getElementById('btnBrowserRefresh').addEventListener('click', refreshBrowserScreen);
+    document.getElementById('browserInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendBrowserInput();
+    });
+
+    // 可视化调试（发布流程）
+    document.getElementById('btnFlowRefreshSessions').addEventListener('click', refreshFlowSessions);
+    document.getElementById('flowSessionSelect').addEventListener('change', (e) => selectFlowSession(e.target.value));
+    document.getElementById('btnFlowPause').addEventListener('click', toggleFlowPause);
+    document.getElementById('autoRefreshFlow').addEventListener('change', (e) => {
+      const active = document.getElementById('tab-flow').classList.contains('active');
+      if (e.target.checked && active) startFlowPolling();
+      else stopFlowPolling();
+    });
+    document.getElementById('btnFlowClear').addEventListener('click', clearFlowDisplay);
+    document.getElementById('btnFlowBrowserRefresh').addEventListener('click', refreshFlowScreenshot);
+    document.getElementById('flowBrowserScreen').addEventListener('click', handleFlowBrowserScreenClick);
+    document.getElementById('btnFlowBrowserInput').addEventListener('click', sendFlowBrowserInput);
+    document.getElementById('flowBrowserInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendFlowBrowserInput();
+    });
+    document.getElementById('flowNetTbody').addEventListener('click', onFlowNetRowClick);
+    document.getElementById('flowNetFilter').addEventListener('input', renderFlowNetTable);
+
+    document.getElementById('btnRefreshCookies').addEventListener('click', refreshCookies);
+    document.getElementById('btnImportCookies').addEventListener('click', () => {
+      const input = document.getElementById('cookieFileInput');
+      if (input) input.click();
+    });
+    document.getElementById('cookieFileInput').addEventListener('change', onCookieFileSelected);
+    document.getElementById('btnClearCookies').addEventListener('click', clearCookies);
+    document.getElementById('btnRefreshLogs').addEventListener('click', refreshLogs);
+    document.getElementById('autoRefreshLogs').addEventListener('change', toggleAutoRefreshLogs);
+    document.getElementById('btnLoadTools').addEventListener('click', loadTools);
+    document.getElementById('toolSelect').addEventListener('change', onToolSelect);
+    document.getElementById('btnResetToolArgs').addEventListener('click', resetToolArgs);
+    document.getElementById('toggleJsonMode').addEventListener('click', toggleJsonMode);
+    document.getElementById('toolArgsJson').addEventListener('input', updateToolArgsPreview);
+    document.getElementById('btnCallTool').addEventListener('click', callTool);
+
+    // 日志管理 Modal 事件
+    document.getElementById('btnLogsClose').addEventListener('click', closeLogsModal);
+    document.getElementById('btnLogsRefresh').addEventListener('click', refreshLogsOverview);
+    document.getElementById('btnLogViewerClose').addEventListener('click', hideLogViewer);
+    document.getElementById('btnLogViewerRefresh').addEventListener('click', refreshLogViewer);
+    document.getElementById('logViewerLines').addEventListener('change', refreshLogViewer);
+
+    logsTbody.addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('button');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      const id = btn.dataset.id;
+      if (!act || !id) return;
+
+      try {
+        if (act === 'view') {
+          await openLogViewer(id);
+          return;
+        }
+        if (act === 'download') {
+          downloadUserLog(id);
+          return;
+        }
+        if (act === 'clear') {
+          await clearUserLog(id);
+          return;
+        }
+      } catch (e) {
+        logsErr.textContent = e.message;
+      }
+    });
+
+    refresh();
+    setInterval(refresh, 2000);
+  </script>
+</body>
+</html>

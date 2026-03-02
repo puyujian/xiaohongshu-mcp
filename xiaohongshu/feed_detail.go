@@ -76,7 +76,9 @@ func (f *FeedDetailAction) GetFeedDetail(ctx context.Context, feedID, xsecToken 
 	return f.GetFeedDetailWithConfig(ctx, feedID, xsecToken, loadAllComments, config)
 }
 
-func (f *FeedDetailAction) GetFeedDetailWithConfig(ctx context.Context, feedID, xsecToken string, loadAllComments bool, config CommentLoadConfig) (*FeedDetailResponse, error) {
+func (f *FeedDetailAction) GetFeedDetailWithConfig(ctx context.Context, feedID, xsecToken string, loadAllComments bool, config CommentLoadConfig) (resp *FeedDetailResponse, err error) {
+	defer recoverRodPanicAsError(ctx, &err)
+
 	page := f.page.Context(ctx).Timeout(10 * time.Minute)
 	url := makeFeedDetailURL(feedID, xsecToken)
 
@@ -85,10 +87,14 @@ func (f *FeedDetailAction) GetFeedDetailWithConfig(ctx context.Context, feedID, 
 		config.ClickMoreReplies, config.MaxRepliesThreshold, config.MaxCommentItems, config.ScrollSpeed)
 
 	// 使用retry-go处理页面导航和DOM稳定等待
-	err := retry.Do(
+	err = retry.Do(
 		func() error {
-			page.MustNavigate(url)
-			page.MustWaitDOMStable()
+			if err := page.Navigate(url); err != nil {
+				return err
+			}
+			if err := page.WaitDOMStable(time.Second, 0); err != nil {
+				return err
+			}
 			return nil
 		},
 		retry.Attempts(3),
@@ -260,7 +266,7 @@ func (cl *commentLoader) updateState(currentCount int) {
 }
 
 func (cl *commentLoader) shouldStopAtTarget(currentCount int) bool {
-	// 如果未设置最大评论数，或者还未达到目标，继续加载
+	// 如果未设置最大评论数，继续加载
 	if cl.config.MaxCommentItems <= 0 {
 		return false
 	}
@@ -617,12 +623,13 @@ func getCommentCount(page *rod.Page) int {
 	// 使用retry-go来处理可能的DOM查询失败
 	err := retry.Do(
 		func() error {
-			// 使用 Go 获取评论元素
-			elements, err := page.Timeout(2 * time.Second).Elements(".parent-comment")
-			if err != nil {
-				return err
-			}
-			result = len(elements)
+			evalResult := page.MustEval(`() => {
+				const container = document.querySelector('.comments-container');
+				if (!container) return 0;
+				return container.querySelectorAll('.parent-comment').length;
+			}`)
+
+			result = evalResult.Int()
 			return nil
 		},
 		retry.Attempts(3),
@@ -647,31 +654,17 @@ func getTotalCommentCount(page *rod.Page) int {
 	// 使用retry-go来处理可能的DOM查询失败
 	err := retry.Do(
 		func() error {
-			// 使用 Go 获取总评论数元素
-			totalEl, err := page.Timeout(2 * time.Second).Element(".comments-container .total")
-			if err != nil {
-				return err
-			}
+			evalResult := page.MustEval(`() => {
+				const container = document.querySelector('.comments-container');
+				if (!container) return 0;
+				const totalEl = container.querySelector('.total');
+				if (!totalEl) return 0;
+				const text = (totalEl.textContent || '').replace(/\s+/g, '');
+				const match = text.match(/共(\d+)条评论/);
+				return match ? parseInt(match[1], 10) : 0;
+			}`)
 
-			// 获取文本内容
-			text, err := totalEl.Text()
-			if err != nil {
-				return err
-			}
-
-			// 使用正则提取数字
-			re := regexp.MustCompile(`共(\d+)条评论`)
-			matches := re.FindStringSubmatch(text)
-			if len(matches) > 1 {
-				count, err := strconv.Atoi(matches[1])
-				if err != nil {
-					return err
-				}
-				result = count
-			} else {
-				result = 0
-			}
-
+			result = evalResult.Int()
 			return nil
 		},
 		retry.Attempts(3),
@@ -715,24 +708,14 @@ func checkEndContainer(page *rod.Page) bool {
 	// 使用retry-go来处理可能的DOM查询失败
 	err := retry.Do(
 		func() error {
-			// 使用 Go 查找结束容器
-			endEl, err := page.Timeout(2 * time.Second).Element(".end-container")
-			if err != nil {
-				// 未找到元素，说明未到底部
-				result = false
-				return nil
-			}
+			evalResult := page.MustEval(`() => {
+				const endContainer = document.querySelector('.end-container');
+				if (!endContainer) return false;
+				const text = (endContainer.textContent || '').trim().toUpperCase();
+				return text.includes('THE END') || text.includes('THEEND');
+			}`)
 
-			// 获取文本内容
-			text, err := endEl.Text()
-			if err != nil {
-				result = false
-				return nil
-			}
-
-			// 转换为大写并检查
-			textUpper := strings.ToUpper(strings.TrimSpace(text))
-			result = strings.Contains(textUpper, "THE END") || strings.Contains(textUpper, "THEEND")
+			result = evalResult.Bool()
 			return nil
 		},
 		retry.Attempts(3),
@@ -756,49 +739,73 @@ func checkEndContainer(page *rod.Page) bool {
 func checkPageAccessible(page *rod.Page) error {
 	time.Sleep(500 * time.Millisecond)
 
-	// 查找错误提示容器
-	wrapperEl, err := page.Timeout(2 * time.Second).Element(".access-wrapper, .error-wrapper, .not-found-wrapper, .blocked-wrapper")
-	if err != nil {
-		// 未找到错误容器，说明页面可访问
-		return nil
+	// 使用retry-go来处理可能的DOM查询失败
+	err := retry.Do(
+		func() error {
+			result := page.MustEval(`() => {
+				const wrapper = document.querySelector('.access-wrapper, .error-wrapper, .not-found-wrapper, .blocked-wrapper');
+				if (!wrapper) return null;
+				
+				const text = wrapper.textContent || wrapper.innerText || '';
+				const keywords = [
+					'当前笔记暂时无法浏览',
+					'该内容因违规已被删除',
+					'该笔记已被删除',
+					'内容不存在',
+					'笔记不存在',
+					'已失效',
+					'私密笔记',
+					'仅作者可见',
+					'因用户设置，你无法查看',
+					'因违规无法查看'
+				];
+				
+				for (const kw of keywords) {
+					if (text.includes(kw)) {
+						return kw;
+					}
+				}
+				
+				if (text.trim()) {
+					return '未知错误: ' + text.trim();
+				}
+				return null;
+			}`)
+
+			rawJSON, marshalErr := result.MarshalJSON()
+			if marshalErr != nil {
+				return fmt.Errorf("无法序列化页面状态检查结果: %w", marshalErr)
+			}
+
+			if string(rawJSON) != "null" {
+				var reason string
+				if unmarshalErr := json.Unmarshal(rawJSON, &reason); unmarshalErr == nil {
+					logrus.Warnf("笔记不可访问: %s", reason)
+					return fmt.Errorf("笔记不可访问: %s", reason)
+				}
+
+				rawReason := string(rawJSON)
+				logrus.Warnf("笔记不可访问，且无法解析原因: %s", rawReason)
+				return fmt.Errorf("笔记不可访问，无法解析原因: %s", rawReason)
+			}
+
+			return nil
+		},
+		retry.Attempts(3),
+		retry.Delay(200*time.Millisecond),
+		retry.MaxJitter(300*time.Millisecond),
+		retry.OnRetry(func(n uint, err error) {
+			logrus.Debugf("页面可访问性检查重试 #%d: %v", n, err)
+		}),
+	)
+
+	// If the error is nil, it means no access issue was found
+	if err == nil {
+		return nil // Page is accessible
 	}
 
-	// 获取文本内容
-	text, err := wrapperEl.Text()
-	if err != nil {
-		// 无法获取文本，假设页面可访问
-		return nil
-	}
-
-	// 检查关键词
-	keywords := []string{
-		"当前笔记暂时无法浏览",
-		"该内容因违规已被删除",
-		"该笔记已被删除",
-		"内容不存在",
-		"笔记不存在",
-		"已失效",
-		"私密笔记",
-		"仅作者可见",
-		"因用户设置，你无法查看",
-		"因违规无法查看",
-	}
-
-	for _, kw := range keywords {
-		if strings.Contains(text, kw) {
-			logrus.Warnf("笔记不可访问: %s", kw)
-			return fmt.Errorf("笔记不可访问: %s", kw)
-		}
-	}
-
-	// 如果有文本但不匹配关键词，返回未知错误
-	trimmedText := strings.TrimSpace(text)
-	if trimmedText != "" {
-		logrus.Warnf("笔记不可访问（未知原因）: %s", trimmedText)
-		return fmt.Errorf("笔记不可访问: %s", trimmedText)
-	}
-
-	return nil
+	// Return the original error from the retry operation
+	return err
 }
 
 // ========== 数据提取 ==========

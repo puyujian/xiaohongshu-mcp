@@ -1,0 +1,512 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+// App 应用
+type App struct {
+	store     *Store
+	proc      *ProcessManager
+	indexHTML string
+}
+
+// NewApp 创建应用
+func NewApp(store *Store, proc *ProcessManager, indexHTML string) *App {
+	return &App{
+		store:     store,
+		proc:      proc,
+		indexHTML: indexHTML,
+	}
+}
+
+// HandleIndex 首页
+func (a *App) HandleIndex(c *gin.Context) {
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.String(http.StatusOK, a.indexHTML)
+}
+
+type userView struct {
+	ID        string `json:"id"`
+	Port      int    `json:"port"`
+	Proxy     string `json:"proxy"`
+	UserAgent string `json:"user_agent"`
+	AutoStart bool   `json:"auto_start"`
+
+	URL string `json:"url"`
+
+	CookiesPath string `json:"cookies_path"`
+	UserDataDir string `json:"user_data_dir"`
+	LogFile     string `json:"log_file"`
+
+	Running   bool   `json:"running"`
+	PID       int    `json:"pid"`
+	HealthOK  bool   `json:"health_ok"`
+	StartedAt string `json:"started_at,omitempty"`
+	LastError string `json:"last_error,omitempty"`
+}
+
+type usersResponse struct {
+	Bin      string     `json:"bin"`
+	Headless bool       `json:"headless"`
+	DataDir  string     `json:"data_dir"`
+	Users    []userView `json:"users"`
+}
+
+// ListUsers 获取用户列表
+func (a *App) ListUsers(c *gin.Context) {
+	cfg := a.store.GetConfig()
+	binPath := a.store.ResolveBinPath()
+	dataDir := a.store.ResolveDataDir()
+	users := a.store.ListUsers()
+
+	out := make([]userView, 0, len(users))
+	for _, u := range users {
+		derived := a.proc.DerivePaths(dataDir, u.ID, u.Port)
+		st := a.proc.GetStatus(u.ID)
+		healthOK := false
+		if st.Running {
+			healthOK = a.proc.CheckHealth(u.Port, 800*time.Millisecond)
+		}
+		out = append(out, userView{
+			ID:          u.ID,
+			Port:        u.Port,
+			Proxy:       u.Proxy,
+			UserAgent:   u.UserAgent,
+			AutoStart:   u.AutoStart,
+			URL:         fmt.Sprintf("http://127.0.0.1:%d", u.Port),
+			CookiesPath: derived.CookiesPath,
+			UserDataDir: derived.UserDataDir,
+			LogFile:     derived.LogFile,
+			Running:     st.Running,
+			PID:         st.PID,
+			HealthOK:    healthOK,
+			StartedAt:   st.StartedAt,
+			LastError:   st.LastError,
+		})
+	}
+
+	c.JSON(http.StatusOK, usersResponse{
+		Bin:      binPath,
+		Headless: cfg.Headless,
+		DataDir:  dataDir,
+		Users:    out,
+	})
+}
+
+type createUserReq struct {
+	ID    string `json:"id"`
+	Port  int    `json:"port"`
+	Proxy string `json:"proxy"`
+}
+
+// CreateUser 创建用户
+func (a *App) CreateUser(c *gin.Context) {
+	var req createUserReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效 JSON"})
+		return
+	}
+	req.ID = strings.TrimSpace(req.ID)
+	req.Proxy = strings.TrimSpace(req.Proxy)
+
+	if err := a.store.CreateUser(UserConfig{
+		ID:    req.ID,
+		Port:  req.Port,
+		Proxy: req.Proxy,
+	}); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusCreated)
+}
+
+type updateUserReq struct {
+	Port  int    `json:"port"`
+	Proxy string `json:"proxy"`
+}
+
+// UpdateUser 更新用户
+func (a *App) UpdateUser(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+	if st := a.proc.GetStatus(id); st.Running {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户进程运行中，请先停止再修改"})
+		return
+	}
+
+	var req updateUserReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效 JSON"})
+		return
+	}
+	req.Proxy = strings.TrimSpace(req.Proxy)
+
+	if err := a.store.UpdateUser(id, UserConfig{
+		ID:    id,
+		Port:  req.Port,
+		Proxy: req.Proxy,
+	}); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// DeleteUser 删除用户
+func (a *App) DeleteUser(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+	if st := a.proc.GetStatus(id); st.Running {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户进程运行中，请先停止再删除"})
+		return
+	}
+	if err := a.store.DeleteUser(id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// StartUser 启动用户
+func (a *App) StartUser(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+	user, ok := a.store.GetUser(id)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+	if st := a.proc.GetStatus(id); st.Running {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户进程已在运行"})
+		return
+	}
+
+	cfg := a.store.GetConfig()
+	binPath := a.store.ResolveBinPath()
+	dataDir := a.store.ResolveDataDir()
+
+	if err := a.proc.StartUser(c.Request.Context(), StartUserParams{
+		User:     user,
+		BinPath:  binPath,
+		Headless: cfg.Headless,
+		DataDir:  dataDir,
+	}); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// 启动成功，记录 AutoStart 状态
+	if err := a.store.SetUserAutoStart(id, true); err != nil {
+		// 落库失败，回滚进程
+		_ = a.proc.StopUser(c.Request.Context(), id, 10*time.Second)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// StopUser 停止用户
+func (a *App) StopUser(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+	if _, ok := a.store.GetUser(id); !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+	if err := a.proc.StopUser(c.Request.Context(), id, 10*time.Second); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// 用户主动停止，清除 AutoStart 状态
+	if err := a.store.SetUserAutoStart(id, false); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// batchReq 批量操作请求
+type batchReq struct {
+	IDs []string `json:"ids"` // 为空表示全部用户
+}
+
+// batchResultItem 批量操作单项结果
+type batchResultItem struct {
+	ID     string `json:"id"`
+	Status string `json:"status"` // started, already_running, stopped, already_stopped, not_found, error
+	Error  string `json:"error,omitempty"`
+}
+
+// BatchStartUsers 批量启动用户
+// POST /api/admin/v1/users/batch/start
+func (a *App) BatchStartUsers(c *gin.Context) {
+	var req batchReq
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效 JSON"})
+		return
+	}
+
+	users := a.store.ListUsers()
+	usersByID := make(map[string]UserConfig, len(users))
+	allIDs := make([]string, 0, len(users))
+	for _, u := range users {
+		usersByID[u.ID] = u
+		allIDs = append(allIDs, u.ID)
+	}
+
+	ids := req.IDs
+	if len(ids) == 0 {
+		ids = allIDs
+	}
+
+	if len(ids) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"summary": gin.H{"requested": 0, "started": 0},
+			"results": []batchResultItem{},
+		})
+		return
+	}
+
+	cfg := a.store.GetConfig()
+	binPath := a.store.ResolveBinPath()
+	dataDir := a.store.ResolveDataDir()
+
+	type job struct {
+		Idx int
+		ID  string
+	}
+	type jobRes struct {
+		Idx  int
+		Item batchResultItem
+	}
+
+	// 并发上限：浏览器启动很吃资源，限制为 2
+	workers := 2
+	if workers > len(ids) {
+		workers = len(ids)
+	}
+
+	jobs := make(chan job)
+	results := make(chan jobRes, len(ids))
+	var wg sync.WaitGroup
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				id := strings.TrimSpace(j.ID)
+				u, ok := usersByID[id]
+				if !ok || id == "" {
+					results <- jobRes{Idx: j.Idx, Item: batchResultItem{ID: id, Status: "not_found", Error: "用户不存在"}}
+					continue
+				}
+				if st := a.proc.GetStatus(id); st.Running {
+					// 已运行，确保 AutoStart 为 true
+					_ = a.store.SetUserAutoStart(id, true)
+					results <- jobRes{Idx: j.Idx, Item: batchResultItem{ID: id, Status: "already_running"}}
+					continue
+				}
+				ctx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
+				err := a.proc.StartUser(ctx, StartUserParams{
+					User:     u,
+					BinPath:  binPath,
+					Headless: cfg.Headless,
+					DataDir:  dataDir,
+				})
+				cancel()
+				if err != nil {
+					results <- jobRes{Idx: j.Idx, Item: batchResultItem{ID: id, Status: "error", Error: err.Error()}}
+					continue
+				}
+				if err := a.store.SetUserAutoStart(id, true); err != nil {
+					_ = a.proc.StopUser(context.Background(), id, 10*time.Second)
+					results <- jobRes{Idx: j.Idx, Item: batchResultItem{ID: id, Status: "error", Error: err.Error()}}
+					continue
+				}
+				results <- jobRes{Idx: j.Idx, Item: batchResultItem{ID: id, Status: "started"}}
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	for i, id := range ids {
+		jobs <- job{Idx: i, ID: id}
+	}
+	close(jobs)
+
+	out := make([]batchResultItem, len(ids))
+	startedCount := 0
+	for r := range results {
+		out[r.Idx] = r.Item
+		if r.Item.Status == "started" {
+			startedCount++
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"summary": gin.H{"requested": len(ids), "started": startedCount},
+		"results": out,
+	})
+}
+
+// BatchStopUsers 批量停止用户
+// POST /api/admin/v1/users/batch/stop
+func (a *App) BatchStopUsers(c *gin.Context) {
+	var req batchReq
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效 JSON"})
+		return
+	}
+
+	users := a.store.ListUsers()
+	usersByID := make(map[string]UserConfig, len(users))
+	allIDs := make([]string, 0, len(users))
+	for _, u := range users {
+		usersByID[u.ID] = u
+		allIDs = append(allIDs, u.ID)
+	}
+
+	ids := req.IDs
+	if len(ids) == 0 {
+		ids = allIDs
+	}
+
+	if len(ids) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"summary": gin.H{"requested": 0, "stopped": 0},
+			"results": []batchResultItem{},
+		})
+		return
+	}
+
+	type job struct {
+		Idx int
+		ID  string
+	}
+	type jobRes struct {
+		Idx  int
+		Item batchResultItem
+	}
+
+	// 停止操作相对轻量，可以稍高并发
+	workers := 4
+	if workers > len(ids) {
+		workers = len(ids)
+	}
+
+	jobs := make(chan job)
+	results := make(chan jobRes, len(ids))
+	var wg sync.WaitGroup
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				id := strings.TrimSpace(j.ID)
+				if id == "" {
+					results <- jobRes{Idx: j.Idx, Item: batchResultItem{ID: id, Status: "not_found", Error: "id 不能为空"}}
+					continue
+				}
+				if _, ok := usersByID[id]; !ok {
+					results <- jobRes{Idx: j.Idx, Item: batchResultItem{ID: id, Status: "not_found", Error: "用户不存在"}}
+					continue
+				}
+				running := a.proc.GetStatus(id).Running
+				if err := a.proc.StopUser(c.Request.Context(), id, 10*time.Second); err != nil {
+					results <- jobRes{Idx: j.Idx, Item: batchResultItem{ID: id, Status: "error", Error: err.Error()}}
+					continue
+				}
+				if err := a.store.SetUserAutoStart(id, false); err != nil {
+					results <- jobRes{Idx: j.Idx, Item: batchResultItem{ID: id, Status: "error", Error: err.Error()}}
+					continue
+				}
+				if running {
+					results <- jobRes{Idx: j.Idx, Item: batchResultItem{ID: id, Status: "stopped"}}
+				} else {
+					results <- jobRes{Idx: j.Idx, Item: batchResultItem{ID: id, Status: "already_stopped"}}
+				}
+			}
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	for i, id := range ids {
+		jobs <- job{Idx: i, ID: id}
+	}
+	close(jobs)
+
+	out := make([]batchResultItem, len(ids))
+	stoppedCount := 0
+	for r := range results {
+		out[r.Idx] = r.Item
+		if r.Item.Status == "stopped" || r.Item.Status == "already_stopped" {
+			stoppedCount++
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"summary": gin.H{"requested": len(ids), "stopped": stoppedCount},
+		"results": out,
+	})
+}
+
+// ResetUserAgent 重置用户的 User-Agent
+// POST /api/admin/v1/users/:id/reset-ua
+func (a *App) ResetUserAgent(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+
+	// 检查用户是否存在
+	if _, ok := a.store.GetUser(id); !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	// 检查进程是否运行中
+	if st := a.proc.GetStatus(id); st.Running {
+		c.JSON(http.StatusConflict, gin.H{"error": "用户进程运行中，请先停止再重置 UA"})
+		return
+	}
+
+	// 重置 UA
+	newUA, err := a.store.ResetUserAgent(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "User-Agent 已重置",
+		"user_agent": newUA,
+	})
+}
