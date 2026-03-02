@@ -54,6 +54,12 @@ func main() {
 
 	r.GET("/", app.HandleIndex)
 
+	publicAPI := r.Group("/api/manager/v1")
+	{
+		publicAPI.GET("/users", app.ListPublicUsers)
+		publicAPI.GET("/users/:id", app.GetPublicUser)
+	}
+
 	api := r.Group("/api/admin/v1")
 	{
 		api.GET("/users", app.ListUsers)

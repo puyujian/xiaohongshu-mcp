@@ -4,7 +4,9 @@
 
 该项目提供了小红书 MCP (Model Context Protocol) 服务的 HTTP API 接口，同时支持 MCP 协议和标准的 HTTP REST API。本文档描述了 HTTP API 的使用方法。
 
-**Base URL**: `http://localhost:18060`
+**Base URL（主服务）**: `http://localhost:18060`
+
+**Base URL（管理器）**: `http://localhost:18050`
 
 **注意**: 以下响应示例仅展示主要字段结构，完整的字段信息请通过实际API调用查看。
 
@@ -47,6 +49,8 @@
 | GET | `/api/v1/user/me` | 获取当前登录用户信息 |
 | POST | `/api/v1/feeds/comment` | 发表评论 |
 | POST | `/api/v1/feeds/comment/reply` | 回复评论 |
+| GET | `/api/manager/v1/users` | 获取管理器全部用户信息（用户、端口、运行状态） |
+| GET | `/api/manager/v1/users/{id}` | 获取管理器单个用户信息（用户、端口、运行状态） |
 
 ---
 
@@ -800,6 +804,98 @@ Content-Type: application/json
 ```
 
 ---
+
+### 7. 管理器用户信息（多用户管理）
+
+以下接口由管理器进程提供，默认监听 `18050` 端口。
+
+#### 7.1 获取全部用户信息
+
+返回所有管理器用户的基础信息与运行状态（包含用户 ID 和端口）。
+
+**请求**
+```
+GET /api/manager/v1/users
+```
+
+**响应**
+```json
+{
+  "count": 2,
+  "users": [
+    {
+      "id": "user1",
+      "port": 18060,
+      "proxy": "",
+      "user_agent": "Mozilla/5.0 ...",
+      "auto_start": true,
+      "url": "http://127.0.0.1:18060",
+      "running": true,
+      "pid": 12345,
+      "health_ok": true,
+      "started_at": "2026-03-02T08:30:00Z"
+    },
+    {
+      "id": "user2",
+      "port": 18061,
+      "proxy": "",
+      "user_agent": "Mozilla/5.0 ...",
+      "auto_start": false,
+      "url": "http://127.0.0.1:18061",
+      "running": false,
+      "pid": 0,
+      "health_ok": false
+    }
+  ]
+}
+```
+
+**响应字段说明：**
+- `count`: 当前返回的用户数量
+- `users[].id`: 用户唯一 ID
+- `users[].port`: 用户实例端口
+- `users[].url`: 用户实例访问地址
+- `users[].running`: 进程是否在运行
+- `users[].health_ok`: 运行时健康检查结果
+
+#### 7.2 获取单个用户信息
+
+按用户 ID 查询单个用户信息（包含端口和运行状态）。
+
+**请求**
+```
+GET /api/manager/v1/users/{id}
+```
+
+示例：
+```
+GET /api/manager/v1/users/user1
+```
+
+**响应**
+```json
+{
+  "user": {
+    "id": "user1",
+    "port": 18060,
+    "proxy": "",
+    "user_agent": "Mozilla/5.0 ...",
+    "auto_start": true,
+    "url": "http://127.0.0.1:18060",
+    "running": true,
+    "pid": 12345,
+    "health_ok": true,
+    "started_at": "2026-03-02T08:30:00Z"
+  }
+}
+```
+
+**错误响应（示例）**
+```json
+{
+  "error": "用户不存在"
+}
+```
 
 ## 错误代码
 

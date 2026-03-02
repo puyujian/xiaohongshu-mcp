@@ -62,6 +62,70 @@ type usersResponse struct {
 	Users    []userView `json:"users"`
 }
 
+type managerUserView struct {
+	ID        string `json:"id"`
+	Port      int    `json:"port"`
+	Proxy     string `json:"proxy"`
+	UserAgent string `json:"user_agent"`
+	AutoStart bool   `json:"auto_start"`
+	URL       string `json:"url"`
+	Running   bool   `json:"running"`
+	PID       int    `json:"pid"`
+	HealthOK  bool   `json:"health_ok"`
+	StartedAt string `json:"started_at,omitempty"`
+	LastError string `json:"last_error,omitempty"`
+}
+
+type managerUsersResponse struct {
+	Count int               `json:"count"`
+	Users []managerUserView `json:"users"`
+}
+
+type managerUserResponse struct {
+	User managerUserView `json:"user"`
+}
+
+func (a *App) buildUserView(dataDir string, u UserConfig) userView {
+	derived := a.proc.DerivePaths(dataDir, u.ID, u.Port)
+	st := a.proc.GetStatus(u.ID)
+	healthOK := false
+	if st.Running {
+		healthOK = a.proc.CheckHealth(u.Port, 800*time.Millisecond)
+	}
+	return userView{
+		ID:          u.ID,
+		Port:        u.Port,
+		Proxy:       u.Proxy,
+		UserAgent:   u.UserAgent,
+		AutoStart:   u.AutoStart,
+		URL:         fmt.Sprintf("http://127.0.0.1:%d", u.Port),
+		CookiesPath: derived.CookiesPath,
+		UserDataDir: derived.UserDataDir,
+		LogFile:     derived.LogFile,
+		Running:     st.Running,
+		PID:         st.PID,
+		HealthOK:    healthOK,
+		StartedAt:   st.StartedAt,
+		LastError:   st.LastError,
+	}
+}
+
+func toManagerUserView(v userView) managerUserView {
+	return managerUserView{
+		ID:        v.ID,
+		Port:      v.Port,
+		Proxy:     v.Proxy,
+		UserAgent: v.UserAgent,
+		AutoStart: v.AutoStart,
+		URL:       v.URL,
+		Running:   v.Running,
+		PID:       v.PID,
+		HealthOK:  v.HealthOK,
+		StartedAt: v.StartedAt,
+		LastError: v.LastError,
+	}
+}
+
 // ListUsers 获取用户列表
 func (a *App) ListUsers(c *gin.Context) {
 	cfg := a.store.GetConfig()
@@ -71,28 +135,7 @@ func (a *App) ListUsers(c *gin.Context) {
 
 	out := make([]userView, 0, len(users))
 	for _, u := range users {
-		derived := a.proc.DerivePaths(dataDir, u.ID, u.Port)
-		st := a.proc.GetStatus(u.ID)
-		healthOK := false
-		if st.Running {
-			healthOK = a.proc.CheckHealth(u.Port, 800*time.Millisecond)
-		}
-		out = append(out, userView{
-			ID:          u.ID,
-			Port:        u.Port,
-			Proxy:       u.Proxy,
-			UserAgent:   u.UserAgent,
-			AutoStart:   u.AutoStart,
-			URL:         fmt.Sprintf("http://127.0.0.1:%d", u.Port),
-			CookiesPath: derived.CookiesPath,
-			UserDataDir: derived.UserDataDir,
-			LogFile:     derived.LogFile,
-			Running:     st.Running,
-			PID:         st.PID,
-			HealthOK:    healthOK,
-			StartedAt:   st.StartedAt,
-			LastError:   st.LastError,
-		})
+		out = append(out, a.buildUserView(dataDir, u))
 	}
 
 	c.JSON(http.StatusOK, usersResponse{
@@ -100,6 +143,40 @@ func (a *App) ListUsers(c *gin.Context) {
 		Headless: cfg.Headless,
 		DataDir:  dataDir,
 		Users:    out,
+	})
+}
+
+// ListPublicUsers 公开查询全部用户信息
+// GET /api/manager/v1/users
+func (a *App) ListPublicUsers(c *gin.Context) {
+	dataDir := a.store.ResolveDataDir()
+	users := a.store.ListUsers()
+	out := make([]managerUserView, 0, len(users))
+	for _, u := range users {
+		out = append(out, toManagerUserView(a.buildUserView(dataDir, u)))
+	}
+	c.JSON(http.StatusOK, managerUsersResponse{
+		Count: len(out),
+		Users: out,
+	})
+}
+
+// GetPublicUser 公开查询单个用户信息
+// GET /api/manager/v1/users/:id
+func (a *App) GetPublicUser(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id 不能为空"})
+		return
+	}
+	user, ok := a.store.GetUser(id)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+	dataDir := a.store.ResolveDataDir()
+	c.JSON(http.StatusOK, managerUserResponse{
+		User: toManagerUserView(a.buildUserView(dataDir, user)),
 	})
 }
 
