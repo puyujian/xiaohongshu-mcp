@@ -112,6 +112,8 @@ func NewBrowser(headless bool, options ...Option) (*Browser, error) {
 		proxyAuthCfg = auth
 		if normalizedProxy != "" {
 			l = l.Set("proxy-server", normalizedProxy)
+			// 代理链路下关闭 QUIC，可降低 net::ERR_EMPTY_RESPONSE 等偶发失败。
+			l = l.Set("disable-quic")
 			logrus.Debugf("browser proxy: %s", sanitizeProxyForLog(normalizedProxy))
 		}
 	}

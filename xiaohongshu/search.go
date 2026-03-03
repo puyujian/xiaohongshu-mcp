@@ -170,17 +170,17 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 
 	page := s.page.Context(ctx)
 
-	searchURL := makeSearchURL(keyword)
-	if err = navigateWithRetry(page, searchURL, 3); err != nil {
+	if err = navigateSearchResultWithFallback(page, keyword); err != nil {
 		return nil, err
 	}
 	if err = page.WaitStable(time.Second); err != nil {
 		return nil, err
 	}
 
-	if err = page.Wait(rod.Eval(`() => window.__INITIAL_STATE__ !== undefined`)); err != nil {
-		return nil, err
-	}
+	// 页面状态对象在代理链路下可能延迟注入，使用有界等待避免整体请求卡到 context deadline。
+	_ = page.Timeout(8 * time.Second).Wait(rod.Eval(`() => {
+		return !!(window.__INITIAL_STATE__ || window.__INITIAL_SSR_STATE__ || window.__UNIVERSAL_STATE__);
+	}`))
 
 	// 如果有筛选条件，则应用筛选
 	if len(filters) > 0 {
@@ -206,8 +206,8 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 		filterButton.MustHover()
 
 		// 等待筛选面板出现
-		if err = page.Wait(rod.Eval(`() => document.querySelector('div.filter-panel') !== null`)); err != nil {
-			return nil, err
+		if err = page.Timeout(8 * time.Second).Wait(rod.Eval(`() => document.querySelector('div.filter-panel') !== null`)); err != nil {
+			return nil, fmt.Errorf("筛选面板加载超时: %w", err)
 		}
 
 		// 应用所有筛选条件
@@ -222,22 +222,75 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 		if err = page.WaitStable(time.Second); err != nil {
 			return nil, err
 		}
-		// 重新等待 __INITIAL_STATE__ 更新
-		if err = page.Wait(rod.Eval(`() => window.__INITIAL_STATE__ !== undefined`)); err != nil {
-			return nil, err
-		}
+		// 重新等待状态对象更新（有界等待）
+		_ = page.Timeout(8 * time.Second).Wait(rod.Eval(`() => {
+			return !!(window.__INITIAL_STATE__ || window.__INITIAL_SSR_STATE__ || window.__UNIVERSAL_STATE__);
+		}`))
 	}
 
 	evalResult, err := page.Eval(`() => {
-		if (window.__INITIAL_STATE__ &&
-		    window.__INITIAL_STATE__.search &&
-		    window.__INITIAL_STATE__.search.feeds) {
-			const feeds = window.__INITIAL_STATE__.search.feeds;
-			const feedsData = feeds.value !== undefined ? feeds.value : feeds._value;
-			if (feedsData) {
-				return JSON.stringify(feedsData);
+		const state = window.__INITIAL_STATE__ || window.__INITIAL_SSR_STATE__ || window.__UNIVERSAL_STATE__;
+		if (!state) return "";
+
+		const toArray = (v) => {
+			if (!v) return null;
+			if (Array.isArray(v)) return v;
+			if (Array.isArray(v.value)) return v.value;
+			if (Array.isArray(v._value)) return v._value;
+			if (v.value && Array.isArray(v.value.list)) return v.value.list;
+			if (v._value && Array.isArray(v._value.list)) return v._value.list;
+			return null;
+		};
+
+		const knownCandidates = [
+			state.search && state.search.feeds,
+			state.feed && state.feed.feeds,
+			state.searchResult && state.searchResult.feeds,
+			state.result && state.result.feeds,
+			state.feeds
+		];
+		for (const c of knownCandidates) {
+			const arr = toArray(c);
+			if (Array.isArray(arr) && arr.length > 0) {
+				return JSON.stringify(arr);
 			}
 		}
+
+		// 兜底：递归扫描状态树，寻找形态接近 feed 的数组。
+		const seen = new Set();
+		const queue = [state];
+		let visited = 0;
+		const maxVisited = 2500;
+		while (queue.length > 0 && visited < maxVisited) {
+			const cur = queue.shift();
+			visited++;
+			if (!cur || typeof cur !== "object") continue;
+			if (seen.has(cur)) continue;
+			seen.add(cur);
+
+			const arr = toArray(cur);
+			if (Array.isArray(arr) && arr.length > 0) {
+				const first = arr[0];
+				if (first && typeof first === "object" && (
+					first.id || first.noteCard || first.note_card || first.xsecToken || first.xsec_token
+				)) {
+					return JSON.stringify(arr);
+				}
+			}
+
+			if (Array.isArray(cur)) {
+				for (const item of cur) {
+					if (item && typeof item === "object") queue.push(item);
+				}
+			} else {
+				for (const key in cur) {
+					if (!Object.prototype.hasOwnProperty.call(cur, key)) continue;
+					const v = cur[key];
+					if (v && typeof v === "object") queue.push(v);
+				}
+			}
+		}
+
 		return "";
 	}`)
 	if err != nil {
@@ -245,7 +298,25 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 	}
 	result := evalResult.Value.String()
 
-	if result == "" {
+	if result == "" || result == "null" || result == "undefined" {
+		diagResult, diagErr := page.Eval(`() => {
+			const state = window.__INITIAL_STATE__ || window.__INITIAL_SSR_STATE__ || window.__UNIVERSAL_STATE__;
+			const bodyText = (document.body && typeof document.body.innerText === "string")
+				? document.body.innerText.slice(0, 120)
+				: "";
+			return JSON.stringify({
+				url: window.location ? window.location.href : "",
+				title: document.title || "",
+				has_initial_state: !!state,
+				body_preview: bodyText
+			});
+		}`)
+		if diagErr == nil {
+			diag := diagResult.Value.String()
+			if diag != "" && diag != "null" && diag != "undefined" {
+				return nil, fmt.Errorf("%w（诊断=%s）", errors.ErrNoFeeds, diag)
+			}
+		}
 		return nil, errors.ErrNoFeeds
 	}
 
@@ -257,12 +328,45 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 }
 
 func makeSearchURL(keyword string) string {
+	return makeSearchURLWithSource(keyword, "web_explore_feed")
+}
 
+func makeSearchURLWithSource(keyword, source string) string {
 	values := url.Values{}
 	values.Set("keyword", keyword)
-	values.Set("source", "web_explore_feed")
-
+	if source == "" {
+		source = "web_explore_feed"
+	}
+	values.Set("source", source)
 	//https://www.xiaohongshu.com/search_result?keyword=%25E7%258E%258B%25E5%25AD%2590&source=web_search_result_notes
 	//https://www.xiaohongshu.com/search_result?keyword=%25E7%258E%258B%25E5%25AD%2590&source=web_explore_feed
 	return fmt.Sprintf("https://www.xiaohongshu.com/search_result?%s", values.Encode())
+}
+
+// navigateSearchResultWithFallback 在代理网络不稳定时依次尝试不同 source 参数，提升搜索页可达性。
+func navigateSearchResultWithFallback(page *rod.Page, keyword string) error {
+	searchURLs := []string{
+		makeSearchURLWithSource(keyword, "web_explore_feed"),
+		makeSearchURLWithSource(keyword, "web_search_result_notes"),
+	}
+
+	seen := make(map[string]struct{}, len(searchURLs))
+	var lastErr error
+	for _, u := range searchURLs {
+		if _, ok := seen[u]; ok {
+			continue
+		}
+		seen[u] = struct{}{}
+		// 搜索页导航单次等待过长会拖垮 MCP 调用，收敛单次导航等待时间。
+		if err := navigateWithRetry(page.Timeout(25*time.Second), u, 4); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("搜索页导航失败: 未生成可用 URL")
 }

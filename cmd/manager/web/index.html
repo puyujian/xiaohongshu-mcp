@@ -30,6 +30,32 @@
     .right { margin-left: auto; }
     .err { color: #ffb4b4; font-size: 12px; white-space: pre-wrap; }
     .link { color: #c7d2fe; text-decoration: none; }
+    .toolbar-actions { align-items: center; }
+    .selection-info { margin-top: 8px; min-height: 16px; }
+    .table-wrap { width: 100%; overflow-x: auto; }
+    .user-table { min-width: 1120px; table-layout: fixed; }
+    .col-check { width: 42px; text-align: center; }
+    .row-check { width: 16px; height: 16px; cursor: pointer; }
+    .proxy-cell { max-width: 220px; }
+    .proxy-text {
+      display: block;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .path-cell { line-height: 1.45; word-break: break-all; }
+    .selected-users {
+      max-height: 120px;
+      overflow-y: auto;
+      background: #0e1630;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: var(--muted);
+      word-break: break-all;
+    }
     .modal { position: fixed; inset: 0; display: none; background: rgba(0,0,0,.55); overflow-y: auto; }
     .modal.show { display: block; }
     .modal .panel { width: min(800px, calc(100% - 24px)); margin: 5vh auto; }
@@ -62,6 +88,39 @@
     .preview-section { margin-top: 12px; }
     .preview-title { margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
     .toggle-json { font-size: 11px; cursor: pointer; color: var(--accent); }
+    @media (max-width: 960px) {
+      .wrap { margin: 12px auto; padding: 0 10px; }
+      .row { gap: 8px; }
+      .toolbar-actions { width: 100%; margin-left: 0; }
+      .toolbar-actions button { flex: 1 1 calc(50% - 8px); min-width: 120px; }
+      .table-wrap { overflow-x: visible; }
+      .user-table { min-width: 0; width: 100%; table-layout: auto; border-collapse: separate; border-spacing: 0 10px; }
+      .user-table thead { display: none; }
+      .user-table tbody { display: block; }
+      .user-table tr { display: block; background: #0e1630; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+      .user-table td { display: block; width: 100%; border-bottom: none; padding: 4px 0; }
+      .user-table td::before { content: attr(data-label); display: block; color: var(--muted); font-size: 11px; margin-bottom: 2px; }
+      .user-table td.col-check { display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px dashed var(--line); }
+      .user-table td.col-check::before { margin-bottom: 0; }
+      .user-table td.actions-cell { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+      .user-table td.actions-cell::before { margin-bottom: 6px; }
+      .user-table td.actions-cell .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: stretch; }
+      .user-table td.actions-cell button { flex: 1 1 calc(50% - 8px); min-width: 110px; }
+      .proxy-cell { max-width: 100%; }
+      .proxy-text { max-width: 100%; white-space: normal; word-break: break-all; overflow: visible; text-overflow: clip; }
+      .grid { grid-template-columns: 1fr; }
+      input, select, textarea { width: 100%; box-sizing: border-box; }
+      .modal .panel { width: min(100%, calc(100% - 16px)); margin: 2vh auto; }
+      .tabs { overflow-x: auto; white-space: nowrap; }
+      .tabs button { flex: 0 0 auto; }
+    }
+    @media (max-width: 640px) {
+      h1 { font-size: 16px; }
+      th, td { padding: 8px 6px; }
+      .toolbar-actions button { flex: 1 1 100%; }
+      .user-table td.actions-cell button { flex: 1 1 100%; }
+      .w120, .w200 { width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -72,22 +131,26 @@
           <h1>xiaohongshu-mcp 多用户管理</h1>
           <div class="muted">通过 Web 界面管理多个用户进程</div>
         </div>
-        <div class="right row">
+        <div class="right row toolbar-actions">
           <button id="btnAdd">添加用户</button>
+          <button id="btnBatchEdit" disabled>批量修改</button>
           <button id="btnStartAll" class="primary">批量启动</button>
           <button id="btnStopAll">批量停止</button>
           <button id="btnLogsManager">日志管理</button>
           <button id="btnRefresh">刷新</button>
         </div>
       </div>
+      <div class="muted selection-info" id="selectionInfo"></div>
       <div class="muted" id="globalInfo"></div>
       <div class="err" id="globalErr"></div>
     </div>
 
     <div class="card" style="margin-top: 12px;">
-      <table>
+      <div class="table-wrap">
+      <table class="user-table">
         <thead>
           <tr>
+            <th class="col-check"><input id="checkAllUsers" class="row-check" type="checkbox" title="全选" /></th>
             <th>用户</th>
             <th>端口</th>
             <th>代理</th>
@@ -100,6 +163,7 @@
         </thead>
         <tbody id="tbody"></tbody>
       </table>
+      </div>
     </div>
   </div>
 
@@ -126,6 +190,30 @@
         <div class="right err" id="formErr"></div>
       </div>
       <div class="muted" style="margin-top: 8px;">说明：用户运行中不允许编辑/删除，请先停止。</div>
+    </div>
+  </div>
+
+  <!-- 批量修改 Modal -->
+  <div class="modal" id="batchModal">
+    <div class="panel card">
+      <div class="row">
+        <h1 style="margin:0;">批量修改实例</h1>
+        <div class="right">
+          <button id="btnBatchClose">关闭</button>
+        </div>
+      </div>
+      <div class="muted" style="margin-top: 12px;">已选实例 ID</div>
+      <div class="selected-users" id="batchTargets">-</div>
+      <div class="grid" style="margin-top: 12px;">
+        <div class="muted">proxy</div>
+        <input id="fBatchProxy" placeholder="输入新代理，留空可清空代理" />
+      </div>
+      <div class="row" style="margin-top: 12px;">
+        <button id="btnBatchSave" class="primary">应用到已选实例</button>
+        <button id="btnBatchCancel">取消</button>
+        <div class="right err" id="batchErr"></div>
+      </div>
+      <div class="muted" style="margin-top: 8px;">说明：仅修改 proxy，端口和其他配置保持不变。运行中实例需先停止才能修改。</div>
     </div>
   </div>
 
@@ -371,6 +459,11 @@
     const tbody = document.getElementById('tbody');
     const globalInfo = document.getElementById('globalInfo');
     const globalErr = document.getElementById('globalErr');
+    const selectionInfo = document.getElementById('selectionInfo');
+    const checkAllUsers = document.getElementById('checkAllUsers');
+    const btnBatchEdit = document.getElementById('btnBatchEdit');
+    const selectedUserIDs = new Set();
+    let lastUsers = [];
 
     // 用户配置 Modal
     const modal = document.getElementById('modal');
@@ -379,6 +472,12 @@
     const fProxy = document.getElementById('fProxy');
     const formErr = document.getElementById('formErr');
     let editingId = null;
+
+    // 批量修改 Modal
+    const batchModal = document.getElementById('batchModal');
+    const fBatchProxy = document.getElementById('fBatchProxy');
+    const batchTargets = document.getElementById('batchTargets');
+    const batchErr = document.getElementById('batchErr');
 
     // 调试 Modal
     const debugModal = document.getElementById('debugModal');
@@ -444,6 +543,103 @@
       }
       const fixed = idx === 0 ? 0 : 2;
       return cur.toFixed(fixed) + ' ' + units[idx];
+    }
+
+    function getSelectedIDs(users = lastUsers) {
+      const validIDs = new Set((users || []).map(u => u.id));
+      const out = [];
+      for (const id of selectedUserIDs) {
+        if (validIDs.has(id)) {
+          out.push(id);
+        } else {
+          selectedUserIDs.delete(id);
+        }
+      }
+      return out;
+    }
+
+    function updateSelectionUI() {
+      const total = lastUsers.length;
+      const selected = getSelectedIDs(lastUsers);
+      const count = selected.length;
+      const hasUsers = total > 0;
+
+      selectionInfo.textContent = hasUsers
+        ? `已选 ${count} / ${total} 个实例`
+        : '暂无实例';
+
+      btnBatchEdit.disabled = count === 0;
+      checkAllUsers.disabled = !hasUsers;
+      checkAllUsers.checked = hasUsers && count === total;
+      checkAllUsers.indeterminate = count > 0 && count < total;
+    }
+
+    function openBatchModal() {
+      const ids = getSelectedIDs(lastUsers);
+      if (!ids.length) {
+        alert('请先勾选至少一个实例');
+        return;
+      }
+      batchErr.textContent = '';
+      batchTargets.textContent = ids.join(', ');
+      fBatchProxy.value = '';
+      batchModal.classList.add('show');
+    }
+
+    function closeBatchModal() {
+      batchModal.classList.remove('show');
+      batchErr.textContent = '';
+    }
+
+    async function saveBatchProxy() {
+      batchErr.textContent = '';
+      const ids = getSelectedIDs(lastUsers);
+      if (!ids.length) {
+        batchErr.textContent = '请先勾选至少一个实例';
+        return;
+      }
+
+      const proxy = (fBatchProxy.value || '').trim();
+      const btn = document.getElementById('btnBatchSave');
+      btn.disabled = true;
+      btn.textContent = '保存中...';
+      try {
+        const data = await api('GET', '/users');
+        const users = data.users || [];
+        const byID = new Map(users.map(u => [u.id, u]));
+        const missing = ids.filter(id => !byID.has(id));
+        if (missing.length) {
+          throw new Error(`以下实例不存在或已被删除: ${missing.join(', ')}`);
+        }
+
+        const running = ids.filter(id => byID.get(id).running);
+        if (running.length) {
+          throw new Error(`以下实例正在运行，请先停止后再修改: ${running.join(', ')}`);
+        }
+
+        const failed = [];
+        for (const id of ids) {
+          const u = byID.get(id);
+          try {
+            await api('PUT', `/users/${encodeURIComponent(id)}`, { port: u.port, proxy });
+          } catch (e) {
+            failed.push(`${id}: ${e.message}`);
+          }
+        }
+
+        if (failed.length) {
+          throw new Error(`部分实例修改失败:\n${failed.join('\n')}`);
+        }
+
+        closeBatchModal();
+        globalInfo.textContent = `批量修改完成：已更新 ${ids.length} 个实例`;
+        await refresh();
+      } catch (e) {
+        batchErr.textContent = e.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '应用到已选实例';
+      }
     }
 
     // ========== 日志管理 Modal 函数 ==========
@@ -1775,7 +1971,7 @@
         const data = await api('POST', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/mcp/call`, {
           name: name,
           arguments: args,
-          timeout_ms: 30000
+          timeout_ms: 90000
         });
         resultEl.textContent = JSON.stringify(data, null, 2);
       } catch (e) {
@@ -1796,7 +1992,9 @@
     }
 
     function render(users) {
-      tbody.innerHTML = users.map(u => {
+      lastUsers = Array.isArray(users) ? users : [];
+      tbody.innerHTML = lastUsers.map(u => {
+        const checked = selectedUserIDs.has(u.id) ? 'checked' : '';
         const badge = u.running
           ? `<span class="badge"><span class="dot ${u.health_ok ? 'ok':'bad'}"></span>运行中 pid=${u.pid || '-'}${u.health_ok ? '' : '（health 异常）'}</span>`
           : `<span class="badge"><span class="dot bad"></span>已停止</span>`;
@@ -1805,6 +2003,10 @@
           : `<button data-act="start" data-id="${esc(u.id)}">启动</button>`;
         const dis = u.running ? 'disabled' : '';
         const url = u.url ? `<a class="link" href="${esc(u.url)}" target="_blank">${esc(u.url)}</a>` : '-';
+        const proxyFull = (u.proxy || '').trim();
+        const proxyDisplay = proxyFull
+          ? `<span class="proxy-text" title="${esc(proxyFull)}">${esc(proxyFull)}</span>`
+          : '<span>-</span>';
         // UA 显示：截断过长的 UA
         const uaFull = u.user_agent || '(未设置)';
         const uaShort = uaFull.length > 50 ? uaFull.substring(0, 50) + '...' : uaFull;
@@ -1813,28 +2015,42 @@
           : `<span title="${esc(uaFull)}">${esc(uaShort)}</span>`;
         return `
           <tr>
-            <td><b>${esc(u.id)}</b>${u.last_error ? `<div class="muted">last_error: ${esc(u.last_error)}</div>` : ''}</td>
-            <td>${esc(u.port)}</td>
-            <td class="muted">${esc(u.proxy || '')}</td>
-            <td class="muted" style="max-width:180px; word-break:break-all; font-size:11px;">${uaDisplay}</td>
-            <td>${badge}${u.started_at ? `<div class="muted">started_at: ${esc(u.started_at)}</div>` : ''}</td>
-            <td class="muted">${url}<div class="muted">/mcp /api/v1 /health</div></td>
-            <td class="muted">
+            <td class="col-check" data-label="选择"><input class="row-check" type="checkbox" data-role="user-select" data-id="${esc(u.id)}" ${checked} /></td>
+            <td data-label="用户"><b>${esc(u.id)}</b>${u.last_error ? `<div class="muted">last_error: ${esc(u.last_error)}</div>` : ''}</td>
+            <td data-label="端口">${esc(u.port)}</td>
+            <td class="muted proxy-cell" data-label="代理">${proxyDisplay}</td>
+            <td class="muted" data-label="User-Agent" style="max-width:180px; word-break:break-all; font-size:11px;">${uaDisplay}</td>
+            <td data-label="状态">${badge}${u.started_at ? `<div class="muted">started_at: ${esc(u.started_at)}</div>` : ''}</td>
+            <td class="muted" data-label="链接">${url}<div class="muted">/mcp /api/v1 /health</div></td>
+            <td class="muted path-cell" data-label="路径">
               cookies: ${esc(u.cookies_path)}<br/>
               profile: ${esc(u.user_data_dir)}<br/>
               log: ${esc(u.log_file)}
             </td>
-            <td class="row" style="gap:8px; flex-wrap:wrap;">
-              ${ops}
-              <button data-act="debug" data-id="${esc(u.id)}" class="primary">调试</button>
-              <button data-act="reset-ua" data-id="${esc(u.id)}" ${dis} title="重新生成随机 UA">重置UA</button>
-              <button data-act="edit" data-id="${esc(u.id)}" ${dis}>编辑</button>
-              <button data-act="del" data-id="${esc(u.id)}" ${dis}>删除</button>
+            <td class="actions-cell" data-label="操作">
+              <div class="row" style="gap:8px; flex-wrap:wrap;">
+                ${ops}
+                <button data-act="debug" data-id="${esc(u.id)}" class="primary">调试</button>
+                <button data-act="reset-ua" data-id="${esc(u.id)}" ${dis} title="重新生成随机 UA">重置UA</button>
+                <button data-act="edit" data-id="${esc(u.id)}" ${dis}>编辑</button>
+                <button data-act="del" data-id="${esc(u.id)}" ${dis}>删除</button>
+              </div>
             </td>
           </tr>
         `;
       }).join('');
+      updateSelectionUI();
     }
+
+    tbody.addEventListener('change', (ev) => {
+      const checkbox = ev.target.closest('input[data-role="user-select"]');
+      if (!checkbox) return;
+      const id = checkbox.dataset.id;
+      if (!id) return;
+      if (checkbox.checked) selectedUserIDs.add(id);
+      else selectedUserIDs.delete(id);
+      updateSelectionUI();
+    });
 
     tbody.addEventListener('click', async (ev) => {
       const btn = ev.target.closest('button');
@@ -1877,18 +2093,21 @@
 
     // 批量操作函数
     async function batchStartAll() {
+      const selectedIDs = getSelectedIDs(lastUsers);
+      const hasSelection = selectedIDs.length > 0;
       const btn = document.getElementById('btnStartAll');
       btn.disabled = true;
       btn.textContent = '启动中...';
       globalErr.textContent = '';
       try {
-        const resp = await api('POST', '/users/batch/start', { ids: [] });
+        const resp = await api('POST', '/users/batch/start', { ids: hasSelection ? selectedIDs : [] });
         const bad = (resp.results || []).filter(x => x.status === 'error' || x.status === 'not_found');
         const summary = resp.summary || {};
+        const scope = hasSelection ? `（已选 ${selectedIDs.length}）` : '（全部）';
         if (bad.length) {
-          alert(`批量启动完成\n请求: ${summary.requested || 0}, 成功启动: ${summary.started || 0}\n\n部分失败:\n` + bad.map(x => `${x.id}: ${x.error || x.status}`).join('\n'));
+          alert(`批量启动完成${scope}\n请求: ${summary.requested || 0}, 成功启动: ${summary.started || 0}\n\n部分失败:\n` + bad.map(x => `${x.id}: ${x.error || x.status}`).join('\n'));
         } else {
-          globalInfo.textContent = `批量启动完成: 请求 ${summary.requested || 0}, 成功 ${summary.started || 0}`;
+          globalInfo.textContent = `批量启动完成${scope}: 请求 ${summary.requested || 0}, 成功 ${summary.started || 0}`;
         }
         await refresh();
       } catch (e) {
@@ -1900,19 +2119,26 @@
     }
 
     async function batchStopAll() {
-      if (!confirm('确认批量停止全部用户？')) return;
+      const selectedIDs = getSelectedIDs(lastUsers);
+      const hasSelection = selectedIDs.length > 0;
+      if (hasSelection) {
+        if (!confirm(`确认批量停止已选 ${selectedIDs.length} 个用户？`)) return;
+      } else if (!confirm('确认批量停止全部用户？')) {
+        return;
+      }
       const btn = document.getElementById('btnStopAll');
       btn.disabled = true;
       btn.textContent = '停止中...';
       globalErr.textContent = '';
       try {
-        const resp = await api('POST', '/users/batch/stop', { ids: [] });
+        const resp = await api('POST', '/users/batch/stop', { ids: hasSelection ? selectedIDs : [] });
         const bad = (resp.results || []).filter(x => x.status === 'error' || x.status === 'not_found');
         const summary = resp.summary || {};
+        const scope = hasSelection ? `（已选 ${selectedIDs.length}）` : '（全部）';
         if (bad.length) {
-          alert(`批量停止完成\n请求: ${summary.requested || 0}, 已停止: ${summary.stopped || 0}\n\n部分失败:\n` + bad.map(x => `${x.id}: ${x.error || x.status}`).join('\n'));
+          alert(`批量停止完成${scope}\n请求: ${summary.requested || 0}, 已停止: ${summary.stopped || 0}\n\n部分失败:\n` + bad.map(x => `${x.id}: ${x.error || x.status}`).join('\n'));
         } else {
-          globalInfo.textContent = `批量停止完成: 请求 ${summary.requested || 0}, 已停止 ${summary.stopped || 0}`;
+          globalInfo.textContent = `批量停止完成${scope}: 请求 ${summary.requested || 0}, 已停止 ${summary.stopped || 0}`;
         }
         await refresh();
       } catch (e) {
@@ -1925,12 +2151,28 @@
 
     // 用户配置 Modal 事件
     document.getElementById('btnAdd').addEventListener('click', () => openModal(null));
+    document.getElementById('btnBatchEdit').addEventListener('click', openBatchModal);
     document.getElementById('btnStartAll').addEventListener('click', batchStartAll);
     document.getElementById('btnStopAll').addEventListener('click', batchStopAll);
     document.getElementById('btnLogsManager').addEventListener('click', openLogsModal);
     document.getElementById('btnRefresh').addEventListener('click', refresh);
     document.getElementById('btnClose').addEventListener('click', closeModal);
     document.getElementById('btnCancel').addEventListener('click', closeModal);
+    document.getElementById('btnBatchClose').addEventListener('click', closeBatchModal);
+    document.getElementById('btnBatchCancel').addEventListener('click', closeBatchModal);
+    document.getElementById('btnBatchSave').addEventListener('click', saveBatchProxy);
+
+    checkAllUsers.addEventListener('change', (ev) => {
+      const checked = !!ev.target.checked;
+      for (const u of lastUsers) {
+        if (checked) selectedUserIDs.add(u.id);
+        else selectedUserIDs.delete(u.id);
+      }
+      tbody.querySelectorAll('input[data-role="user-select"]').forEach(el => {
+        el.checked = checked;
+      });
+      updateSelectionUI();
+    });
 
     document.getElementById('btnSave').addEventListener('click', async () => {
       formErr.textContent = '';
@@ -2036,6 +2278,7 @@
       }
     });
 
+    updateSelectionUI();
     refresh();
     setInterval(refresh, 2000);
   </script>

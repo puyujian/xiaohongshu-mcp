@@ -3,6 +3,8 @@ package xiaohongshu
 import (
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,9 +16,7 @@ func navigateWithRetry(page *rod.Page, targetURL string, attempts int) error {
 	if page == nil {
 		return fmt.Errorf("page 不能为空")
 	}
-	if attempts <= 0 {
-		attempts = 1
-	}
+	attempts = effectiveNavigateAttempts(attempts)
 
 	var lastErr error
 	var tried int
@@ -53,6 +53,8 @@ func isRetryableNavigationError(err error) bool {
 	if errors.As(err, &navErr) {
 		switch navErr.Reason {
 		case "net::ERR_EMPTY_RESPONSE",
+			"net::ERR_RESPONSE_HEADERS_TRUNCATED",
+			"net::ERR_HTTP2_PROTOCOL_ERROR",
 			"net::ERR_PROXY_CONNECTION_FAILED",
 			"net::ERR_TUNNEL_CONNECTION_FAILED",
 			"net::ERR_SOCKS_CONNECTION_FAILED",
@@ -73,6 +75,8 @@ func isRetryableNavigationError(err error) bool {
 	// 兜底：部分错误可能被包装成普通 error
 	msg := err.Error()
 	return strings.Contains(msg, "net::ERR_EMPTY_RESPONSE") ||
+		strings.Contains(msg, "net::ERR_RESPONSE_HEADERS_TRUNCATED") ||
+		strings.Contains(msg, "net::ERR_HTTP2_PROTOCOL_ERROR") ||
 		strings.Contains(msg, "net::ERR_PROXY_CONNECTION_FAILED") ||
 		strings.Contains(msg, "net::ERR_TUNNEL_CONNECTION_FAILED") ||
 		strings.Contains(msg, "net::ERR_SOCKS_CONNECTION_FAILED") ||
@@ -89,12 +93,35 @@ func isRetryableNavigationError(err error) bool {
 func navigateBackoff(attempt int) time.Duration {
 	switch attempt {
 	case 1:
-		return 300 * time.Millisecond
+		return 600 * time.Millisecond
 	case 2:
-		return 800 * time.Millisecond
+		return 1200 * time.Millisecond
 	case 3:
-		return 1500 * time.Millisecond
-	default:
 		return 2 * time.Second
+	case 4:
+		return 3 * time.Second
+	case 5:
+		return 5 * time.Second
+	default:
+		return 8 * time.Second
 	}
+}
+
+func effectiveNavigateAttempts(attempts int) int {
+	if attempts <= 0 {
+		attempts = 1
+	}
+	// 代理链路比直连更容易出现瞬时断连；但重试过多会增加 MCP 调用超时风险。
+	// 默认将代理场景最小重试次数提升到 4 次，并允许通过环境变量覆盖。
+	// 例如：XHS_NAVIGATE_PROXY_ATTEMPTS=6
+	proxyMinAttempts := 4
+	if raw := strings.TrimSpace(os.Getenv("XHS_NAVIGATE_PROXY_ATTEMPTS")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 10 {
+			proxyMinAttempts = n
+		}
+	}
+	if strings.TrimSpace(os.Getenv("XHS_PROXY")) != "" && attempts < proxyMinAttempts {
+		return proxyMinAttempts
+	}
+	return attempts
 }
