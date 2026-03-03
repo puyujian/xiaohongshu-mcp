@@ -25,7 +25,7 @@ func main() {
 
 	// 环境变量 fallback
 	if proxy == "" {
-		proxy = os.Getenv("BROWSER_PROXY")
+		proxy = os.Getenv("XHS_PROXY")
 	}
 	if err := configs.ApplyProxyToEnv(proxy); err != nil {
 		logrus.Warnf("代理环境变量设置失败（将仅影响 Go 侧网络请求/浏览器下载）：%v", err)

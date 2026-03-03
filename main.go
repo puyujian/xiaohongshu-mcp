@@ -30,7 +30,7 @@ func main() {
 		binPath = os.Getenv("ROD_BROWSER_BIN")
 	}
 	if len(proxy) == 0 {
-		proxy = os.Getenv("BROWSER_PROXY")
+		proxy = os.Getenv("XHS_PROXY")
 	}
 	if len(userDataDir) == 0 {
 		userDataDir = os.Getenv("BROWSER_USER_DATA_DIR")

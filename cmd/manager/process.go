@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const envCookiesPath = "COOKIES_PATH"
+const (
+	envCookiesPath = "COOKIES_PATH"
+	envXHSProxy    = "XHS_PROXY"
+)
 
 // DerivedPaths 派生路径
 type DerivedPaths struct {
@@ -152,7 +155,7 @@ func (pm *ProcessManager) StartUser(ctx context.Context, params StartUserParams)
 	}
 
 	cmd := exec.Command(params.BinPath, args...)
-	cmd.Env = append(os.Environ(), envCookiesPath+"="+paths.CookiesPath)
+	cmd.Env = append(buildChildEnvForUser(params.User.Proxy), envCookiesPath+"="+paths.CookiesPath)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
@@ -270,4 +273,34 @@ func ensureDirs(p DerivedPaths) error {
 		return fmt.Errorf("创建 logs 目录失败: %w", err)
 	}
 	return nil
+}
+
+func buildChildEnvForUser(proxy string) []string {
+	source := os.Environ()
+	env := make([]string, 0, len(source)+2)
+	for _, item := range source {
+		key := item
+		if i := strings.IndexByte(item, '='); i >= 0 {
+			key = item[:i]
+		}
+		if isProxyRelatedEnvKey(key) {
+			continue
+		}
+		env = append(env, item)
+	}
+
+	proxy = strings.TrimSpace(proxy)
+	if proxy != "" {
+		env = append(env, envXHSProxy+"="+proxy)
+	}
+	return env
+}
+
+func isProxyRelatedEnvKey(key string) bool {
+	switch strings.ToUpper(strings.TrimSpace(key)) {
+	case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", envXHSProxy:
+		return true
+	default:
+		return false
+	}
 }
