@@ -32,6 +32,8 @@
 }
 ```
 
+**补充说明**: 管理器接口（`/api/manager/v1`、`/api/admin/v1`）的响应结构以各章节示例为准；其中写操作成功时可能直接返回 `201 Created` 或 `204 No Content` 空响应体。
+
 ## API 端点一览
 
 | 方法 | 端点 | 描述 |
@@ -53,6 +55,9 @@
 | POST | `/api/v1/feeds/comment/reply` | 回复评论 |
 | GET | `/api/manager/v1/users` | 获取管理器全部用户信息（用户、端口、运行状态） |
 | GET | `/api/manager/v1/users/{id}` | 获取管理器单个用户信息（用户、端口、运行状态） |
+| POST | `/api/admin/v1/users` | 新增管理器账号 |
+| PUT | `/api/admin/v1/users/{id}` | 编辑管理器账号 |
+| DELETE | `/api/admin/v1/users/{id}` | 删除管理器账号 |
 
 ---
 
@@ -885,9 +890,13 @@ Content-Type: application/json
 
 ---
 
-### 8. 管理器用户信息（多用户管理）
+### 8. 管理器用户管理（多用户管理）
 
 以下接口由管理器进程提供，默认监听 `18050` 端口。
+
+- `/api/manager/v1`：公开只读查询接口，用于获取账号与运行状态。
+- `/api/admin/v1`：本地管理接口，用于新增、编辑、删除、启动、停止账号。
+- 编辑或删除账号前，请先停止对应账号进程，否则会返回冲突错误。
 
 #### 8.1 获取全部用户信息
 
@@ -976,6 +985,129 @@ GET /api/manager/v1/users/user1
   "error": "用户不存在"
 }
 ```
+
+#### 8.3 新增账号
+
+向管理器新增一个账号配置。
+
+**请求**
+```
+POST /api/admin/v1/users
+Content-Type: application/json
+```
+
+**请求体**
+```json
+{
+  "id": "user3",
+  "port": 18062,
+  "proxy": "http://127.0.0.1:7890"
+}
+```
+
+**请求参数说明：**
+- `id` (string, required): 账号唯一 ID，只允许字母、数字、下划线、连字符
+- `port` (integer, required): 账号实例监听端口，范围 `1~65535`
+- `proxy` (string, optional): 代理地址；传空字符串表示不使用代理
+
+**成功响应**
+```http
+HTTP/1.1 201 Created
+```
+
+成功时无响应体。创建时若未显式传入 `user_agent`，管理器会自动生成随机浏览器 `User-Agent`。
+
+**错误响应（示例）**
+```json
+{
+  "error": "用户已存在: user3"
+}
+```
+
+常见错误：
+- `id` 为空或格式非法
+- `port` 非法或已被其他账号占用
+- 请求体不是合法 JSON
+
+#### 8.4 编辑账号
+
+修改指定账号的端口和代理配置。
+
+**请求**
+```
+PUT /api/admin/v1/users/{id}
+Content-Type: application/json
+```
+
+示例：
+```
+PUT /api/admin/v1/users/user3
+```
+
+**请求体**
+```json
+{
+  "port": 18063,
+  "proxy": ""
+}
+```
+
+**请求参数说明：**
+- `id` (path, required): 要修改的账号 ID
+- `port` (integer, required): 修改后的实例端口，范围 `1~65535`
+- `proxy` (string, optional): 修改后的代理地址；传空字符串表示清空代理
+
+**成功响应**
+```http
+HTTP/1.1 204 No Content
+```
+
+成功时无响应体。
+
+**错误响应（示例）**
+```json
+{
+  "error": "用户进程运行中，请先停止再修改"
+}
+```
+
+常见错误：
+- 账号不存在
+- 目标端口已被其他账号占用
+- 账号进程仍在运行（返回 `409 Conflict`）
+- 请求体不是合法 JSON
+
+#### 8.5 删除账号
+
+删除指定账号配置。
+
+**请求**
+```
+DELETE /api/admin/v1/users/{id}
+```
+
+示例：
+```
+DELETE /api/admin/v1/users/user3
+```
+
+**成功响应**
+```http
+HTTP/1.1 204 No Content
+```
+
+成功时无响应体。
+
+**错误响应（示例）**
+```json
+{
+  "error": "用户进程运行中，请先停止再删除"
+}
+```
+
+常见错误：
+- 账号不存在
+- 账号进程仍在运行（返回 `409 Conflict`）
 
 ## 错误代码
 
