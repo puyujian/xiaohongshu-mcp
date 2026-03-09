@@ -64,3 +64,70 @@ func (n *NavigateAction) ToProfilePage(ctx context.Context) (err error) {
 
 	return nil
 }
+
+func (n *NavigateAction) ToNotificationPage(ctx context.Context) (err error) {
+	defer recoverRodPanicAsError(ctx, &err)
+
+	page := n.page.Context(ctx)
+
+	if err := n.ToExplorePage(ctx); err != nil {
+		return err
+	}
+
+	if err = page.WaitStable(time.Second); err != nil {
+		return err
+	}
+
+	notificationLink, err := page.Element(`a.link-wrapper[href="/notification"]`)
+	if err != nil {
+		return err
+	}
+	if err = notificationLink.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return err
+	}
+	if err = page.Wait(rod.Eval(`() => location.pathname === "/notification"`)); err != nil {
+		return err
+	}
+
+	return page.WaitStable(time.Second)
+}
+
+func (n *NavigateAction) ToNotificationMentionsPage(ctx context.Context) (err error) {
+	defer recoverRodPanicAsError(ctx, &err)
+
+	page := n.page.Context(ctx)
+
+	if err := n.ToNotificationPage(ctx); err != nil {
+		return err
+	}
+
+	if err = page.Wait(rod.Eval(`() => [...document.querySelectorAll('.reds-tab-item')].some(
+		(el) => (el.textContent || '').trim() === '评论和@'
+	)`)); err != nil {
+		return err
+	}
+
+	if _, err = page.Eval(`() => {
+		const mentionsTab = [...document.querySelectorAll('.reds-tab-item')].find(
+			(el) => (el.textContent || '').trim() === '评论和@'
+		);
+		if (!mentionsTab) {
+			return false;
+		}
+		if (!mentionsTab.classList.contains('active')) {
+			mentionsTab.click();
+		}
+		return true;
+	}`); err != nil {
+		return err
+	}
+
+	if err = page.Wait(rod.Eval(`() => {
+		const activeTab = document.querySelector('.reds-tab-item.active');
+		return !!activeTab && (activeTab.textContent || '').trim() === '评论和@';
+	}`)); err != nil {
+		return err
+	}
+
+	return page.WaitStable(time.Second)
+}

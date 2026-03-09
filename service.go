@@ -134,6 +134,15 @@ type UserProfileResponse struct {
 	Feeds         []xiaohongshu.Feed             `json:"feeds"`
 }
 
+// NotificationMentionsResponse 评论和@通知响应
+type NotificationMentionsResponse struct {
+	Notifications  []xiaohongshu.NotificationMention `json:"notifications"`
+	Count          int                               `json:"count"`
+	Cursor         string                            `json:"cursor,omitempty"`
+	HasMore        bool                              `json:"has_more"`
+	SourceEndpoint string                            `json:"source_endpoint"`
+}
+
 // DeleteCookies 删除 cookies 文件，用于登录重置
 func (s *XiaohongshuService) DeleteCookies(ctx context.Context) error {
 	cookiePath := cookies.GetCookiesFilePath()
@@ -616,6 +625,29 @@ func (s *XiaohongshuService) UserProfile(ctx context.Context, userID, xsecToken 
 
 	return response, nil
 
+}
+
+// GetNotificationMentions 获取当前登录账号的“评论和@”通知
+func (s *XiaohongshuService) GetNotificationMentions(ctx context.Context) (*NotificationMentionsResponse, error) {
+	var result *xiaohongshu.NotificationMentionsData
+	var err error
+
+	err = s.withBrowserPage(func(page *rod.Page) error {
+		action := xiaohongshu.NewNotificationMentionsAction(page)
+		result, err = action.GetMentions(ctx)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &NotificationMentionsResponse{
+		Notifications:  result.MessageList,
+		Count:          len(result.MessageList),
+		Cursor:         result.Cursor,
+		HasMore:        result.HasMore,
+		SourceEndpoint: "https://edith.xiaohongshu.com/api/sns/web/v1/you/mentions",
+	}, nil
 }
 
 // PostCommentToFeed 发表评论到Feed

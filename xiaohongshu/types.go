@@ -168,3 +168,25 @@ type UserInteractions struct {
 	Name  string `json:"name"`  // 关注 粉丝 获赞与收藏
 	Count string `json:"count"` // 数量
 }
+
+// NotificationMention 表示通知页“评论和@”中的单条消息
+type NotificationMention struct {
+	ID          string         `json:"id"`
+	Title       string         `json:"title"`
+	Type        string         `json:"type"`
+	Time        int64          `json:"time"`
+	TimeFlag    int            `json:"timeFlag"`
+	Score       int64          `json:"score"`
+	TrackType   string         `json:"trackType"`
+	Liked       bool           `json:"liked"`
+	UserInfo    map[string]any `json:"userInfo,omitempty"`
+	CommentInfo map[string]any `json:"commentInfo,omitempty"`
+	ItemInfo    map[string]any `json:"itemInfo,omitempty"`
+}
+
+// NotificationMentionsData 表示通知页“评论和@”数据
+type NotificationMentionsData struct {
+	MessageList []NotificationMention `json:"messageList"`
+	Cursor      string                `json:"cursor"`
+	HasMore     bool                  `json:"hasMore"`
+}

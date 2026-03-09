@@ -51,6 +51,7 @@
 | POST | `/api/v1/feeds/favorite` | 收藏/取消收藏 |
 | POST | `/api/v1/user/profile` | 获取用户主页信息 |
 | GET | `/api/v1/user/me` | 获取当前登录用户信息 |
+| GET | `/api/v1/notifications/mentions` | 获取通知页“评论和@”列表 |
 | POST | `/api/v1/feeds/comment` | 发表评论 |
 | POST | `/api/v1/feeds/comment/reply` | 回复评论 |
 | GET | `/api/manager/v1/users` | 获取管理器全部用户信息（用户、端口、运行状态） |
@@ -728,9 +729,78 @@ GET /api/v1/user/me
 
 ---
 
-### 6. 互动操作
+### 6. 通知管理
 
-#### 6.1 点赞/取消点赞
+#### 6.1 获取通知页“评论和@”列表
+
+获取当前登录账号在通知页“评论和@”中的最新通知列表。
+
+**请求**
+```
+GET /api/v1/notifications/mentions
+```
+
+**响应**
+```json
+{
+  "success": true,
+  "data": {
+    "notifications": [
+      {
+        "id": "7614813838413009474",
+        "title": "评论了你的笔记",
+        "type": "comment/comment",
+        "time": 1772962007,
+        "timeFlag": 0,
+        "score": 7614813838413010000,
+        "trackType": "42",
+        "liked": false,
+        "userInfo": {
+          "nickname": "等.",
+          "image": "https://sns-avatar-qc.xhscdn.com/avatar/demo.jpg",
+          "userid": "user_id",
+          "xsecToken": "xsec_token"
+        },
+        "commentInfo": {
+          "content": "后来～",
+          "id": "comment_id",
+          "likeCount": 0,
+          "liked": false
+        },
+        "itemInfo": {
+          "id": "note_id",
+          "type": "note_info",
+          "xsecToken": "xsec_token",
+          "link": "https://www.xiaohongshu.com/explore/..."
+        }
+      }
+    ],
+    "count": 20,
+    "cursor": "7594656783797313323",
+    "has_more": true,
+    "source_endpoint": "https://edith.xiaohongshu.com/api/sns/web/v1/you/mentions"
+  },
+  "message": "获取评论和@通知成功"
+}
+```
+
+**响应字段说明:**
+- `notifications`: 当前页面已加载的“评论和@”通知列表
+- `notifications[].title`: 通知标题，例如“评论了你的笔记”
+- `notifications[].type`: 通知类型
+- `notifications[].time`: 通知时间戳
+- `notifications[].userInfo`: 触发通知的用户信息
+- `notifications[].commentInfo`: 评论或回复内容信息
+- `notifications[].itemInfo`: 关联笔记信息
+- `cursor`: 当前批次对应的翻页游标
+- `has_more`: 是否还有更多历史通知
+- `source_endpoint`: 页面真实使用的上游接口
+
+---
+
+### 7. 互动操作
+
+#### 7.1 点赞/取消点赞
 
 对指定 Feed 执行点赞或取消点赞操作。
 
@@ -767,7 +837,7 @@ Content-Type: application/json
 }
 ```
 
-#### 6.2 收藏/取消收藏
+#### 7.2 收藏/取消收藏
 
 对指定 Feed 执行收藏或取消收藏操作。
 
@@ -806,9 +876,9 @@ Content-Type: application/json
 
 ---
 
-### 7. 评论管理
+### 8. 评论管理
 
-#### 7.1 发表评论
+#### 8.1 发表评论
 
 对指定 Feed 发表评论。
 
@@ -845,7 +915,7 @@ Content-Type: application/json
 }
 ```
 
-#### 7.2 回复评论
+#### 8.2 回复评论
 
 回复指定评论。
 
@@ -890,7 +960,7 @@ Content-Type: application/json
 
 ---
 
-### 8. 管理器用户管理（多用户管理）
+### 9. 管理器用户管理（多用户管理）
 
 以下接口由管理器进程提供，默认监听 `18050` 端口。
 
@@ -898,7 +968,7 @@ Content-Type: application/json
 - `/api/admin/v1`：本地管理接口，用于新增、编辑、删除、启动、停止账号。
 - 编辑或删除账号前，请先停止对应账号进程，否则会返回冲突错误。
 
-#### 8.1 获取全部用户信息
+#### 9.1 获取全部用户信息
 
 返回所有管理器用户的基础信息与运行状态（包含用户 ID 和端口）。
 
@@ -947,7 +1017,7 @@ GET /api/manager/v1/users
 - `users[].running`: 进程是否在运行
 - `users[].health_ok`: 运行时健康检查结果
 
-#### 8.2 获取单个用户信息
+#### 9.2 获取单个用户信息
 
 按用户 ID 查询单个用户信息（包含端口和运行状态）。
 
@@ -986,7 +1056,7 @@ GET /api/manager/v1/users/user1
 }
 ```
 
-#### 8.3 新增账号
+#### 9.3 新增账号
 
 向管理器新增一个账号配置。
 
@@ -1029,7 +1099,7 @@ HTTP/1.1 201 Created
 - `port` 非法或已被其他账号占用
 - 请求体不是合法 JSON
 
-#### 8.4 编辑账号
+#### 9.4 编辑账号
 
 修改指定账号的端口和代理配置。
 
@@ -1077,7 +1147,7 @@ HTTP/1.1 204 No Content
 - 账号进程仍在运行（返回 `409 Conflict`）
 - 请求体不是合法 JSON
 
-#### 8.5 删除账号
+#### 9.5 删除账号
 
 删除指定账号配置。
 

@@ -379,3 +379,16 @@ func (s *AppServer) myProfileHandler(c *gin.Context) {
 	c.Set("account", "ai-report")
 	respondSuccess(c, map[string]any{"data": result}, "获取我的主页成功")
 }
+
+// notificationMentionsHandler 获取通知页“评论和@”列表
+func (s *AppServer) notificationMentionsHandler(c *gin.Context) {
+	result, err := s.xiaohongshuService.GetNotificationMentions(c.Request.Context())
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "GET_NOTIFICATION_MENTIONS_FAILED",
+			"获取评论和@通知失败", err.Error())
+		return
+	}
+
+	c.Set("account", "ai-report")
+	respondSuccess(c, result, "获取评论和@通知成功")
+}
