@@ -1,0 +1,9 @@
+./config.go
+./debug_handlers.go
+./handlers.go
+./log_admin_handlers.go
+./main.go
+./mcp_proxy.go
+./process.go
+./user_agent.go
+./debug_handlers_test.go

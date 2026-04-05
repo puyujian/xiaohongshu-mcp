@@ -1,0 +1,19 @@
+# test log
+stat C:\Users\60350\AppData\Local\Temp\test_downloader
+stat C:\Users\60350\AppData\Local\Temp
+stat C:\Users\60350\AppData\Local\Temp\test_downloader
+stat C:\Users\60350\AppData\Local\Temp
+stat C:\Users\60350\AppData\Local\Temp
+stat C:\Users\60350\AppData\Local\Temp\TestDownloadImage_AntiHotlink3848054677\001
+getenv HTTP_PROXY
+getenv http_proxy
+getenv HTTPS_PROXY
+getenv https_proxy
+getenv NO_PROXY
+getenv no_proxy
+getenv REQUEST_METHOD
+stat C:\Users\60350\AppData\Local\Temp\TestDownloadImage_AntiHotlink3848054677\001\img_4f2f0075d4012557_1775411101.png
+open C:\Users\60350\AppData\Local\Temp\TestDownloadImage_AntiHotlink3848054677\001\img_4f2f0075d4012557_1775411101.png
+stat C:\Users\60350\AppData\Local\Temp\TestDownloadImage_AntiHotlink3848054677\001\img_4f2f0075d4012557_1775411101.png
+open C:\Users\60350\AppData\Local\Temp
+getenv XHS_RUN_NETWORK_TESTS

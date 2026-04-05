@@ -159,6 +159,10 @@ func (s *XiaohongshuService) DeleteCookies(ctx context.Context) error {
 
 // CheckLoginStatus 检查登录状态
 func (s *XiaohongshuService) CheckLoginStatus(ctx context.Context) (*LoginStatusResponse, error) {
+	return runLoginPublishWithRetry(s, ctx, "登录状态检查", s.checkLoginStatusOnce)
+}
+
+func (s *XiaohongshuService) checkLoginStatusOnce(ctx context.Context, proxy string) (*LoginStatusResponse, error) {
 	// 检查是否有活跃的登录会话
 	s.loginPageMu.RLock()
 	activePage := s.activeLoginPage
@@ -174,10 +178,6 @@ func (s *XiaohongshuService) CheckLoginStatus(ctx context.Context) (*LoginStatus
 	}
 
 	// 没有活跃页面，使用共享浏览器检查
-	proxy, err := s.resolveLoginPublishProxy(ctx)
-	if err != nil {
-		return nil, err
-	}
 	b, err := s.getBrowser(proxy)
 	if err != nil {
 		return nil, err
@@ -190,7 +190,6 @@ func (s *XiaohongshuService) CheckLoginStatus(ctx context.Context) (*LoginStatus
 
 	isLoggedIn, err := loginAction.CheckLoginStatus(ctx)
 	if err != nil {
-		s.resetProxyBrowserOnFailure()
 		return nil, err
 	}
 
@@ -204,10 +203,10 @@ func (s *XiaohongshuService) CheckLoginStatus(ctx context.Context) (*LoginStatus
 
 // GetLoginQrcode 获取登录的扫码二维码
 func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeResponse, error) {
-	proxy, err := s.resolveLoginPublishProxy(ctx)
-	if err != nil {
-		return nil, err
-	}
+	return runLoginPublishWithRetry(s, ctx, "登录二维码获取", s.getLoginQrcodeOnce)
+}
+
+func (s *XiaohongshuService) getLoginQrcodeOnce(ctx context.Context, proxy string) (*LoginQrcodeResponse, error) {
 	b, err := s.getBrowser(proxy)
 	if err != nil {
 		return nil, err
@@ -236,7 +235,6 @@ func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeRe
 		defer deferFunc()
 	}
 	if err != nil {
-		s.resetProxyBrowserOnFailure()
 		return nil, err
 	}
 
@@ -306,6 +304,12 @@ func (s *XiaohongshuService) ProcessLoginBrowserAction(ctx context.Context, acti
 
 // PublishContent 发布内容
 func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishRequest) (*PublishResponse, error) {
+	return runLoginPublishWithRetry(s, ctx, "图文发布", func(ctx context.Context, proxy string) (*PublishResponse, error) {
+		return s.publishContentOnce(ctx, req, proxy)
+	})
+}
+
+func (s *XiaohongshuService) publishContentOnce(ctx context.Context, req *PublishRequest, publishProxy string) (*PublishResponse, error) {
 	// 创建调试会话（无论是否打开 UI，均记录最近一次流程，便于排查发布失败原因）
 	sess := s.flowDebug.NewSession("publish_image")
 	dbgCtx := flowdebug.WithDebugger(ctx, sess)
@@ -326,14 +330,8 @@ func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishReq
 
 	// 处理图片：下载URL图片或使用本地路径
 	sess.Step("处理图片", map[string]any{"count": len(req.Images)})
-	publishProxy, err := s.resolveLoginPublishProxy(ctx)
-	if err != nil {
-		endErr = err
-		return nil, err
-	}
 	imagePaths, err := s.processImages(req.Images, publishProxy)
 	if err != nil {
-		s.resetProxyBrowserOnFailure()
 		endErr = err
 		return nil, err
 	}
@@ -382,7 +380,6 @@ func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishReq
 	defer cancel()
 	endErr = s.publishContent(publishCtx, content, sess, publishProxy)
 	if endErr != nil {
-		s.resetProxyBrowserOnFailure()
 		message, details := explainPublishError("图文笔记发布", endErr)
 		logrus.WithFields(logrus.Fields{
 			"title":      content.Title,
@@ -453,6 +450,12 @@ func (s *XiaohongshuService) publishContent(ctx context.Context, content xiaohon
 
 // PublishVideo 发布视频（本地文件）
 func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideoRequest) (*PublishVideoResponse, error) {
+	return runLoginPublishWithRetry(s, ctx, "视频发布", func(ctx context.Context, proxy string) (*PublishVideoResponse, error) {
+		return s.publishVideoOnce(ctx, req, proxy)
+	})
+}
+
+func (s *XiaohongshuService) publishVideoOnce(ctx context.Context, req *PublishVideoRequest, publishProxy string) (*PublishVideoResponse, error) {
 	sess := s.flowDebug.NewSession("publish_video")
 	dbgCtx := flowdebug.WithDebugger(ctx, sess)
 	sess.Step("收到发布视频请求", map[string]any{
@@ -481,11 +484,6 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 
 	// 解析定时发布时间
 	var scheduleTime *time.Time
-	publishProxy, err := s.resolveLoginPublishProxy(ctx)
-	if err != nil {
-		endErr = err
-		return nil, err
-	}
 	if req.ScheduleAt != "" {
 		t, err := time.Parse(time.RFC3339, req.ScheduleAt)
 		if err != nil {
@@ -527,7 +525,6 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 	defer cancel()
 	endErr = s.publishVideo(publishCtx, content, sess, publishProxy)
 	if endErr != nil {
-		s.resetProxyBrowserOnFailure()
 		message, details := explainPublishError("视频笔记发布", endErr)
 		logrus.WithFields(logrus.Fields{
 			"title":      content.Title,
@@ -894,16 +891,6 @@ func (s *XiaohongshuService) withBrowserPage(fn func(*rod.Page) error) error {
 
 func (s *XiaohongshuService) resolveLoginPublishProxy(ctx context.Context) (string, error) {
 	return proxyutil.Resolve(ctx, configs.GetProxy(), configs.GetProxyPool())
-}
-
-func (s *XiaohongshuService) resetProxyBrowserOnFailure() {
-	if strings.TrimSpace(configs.GetProxy()) != "" || strings.TrimSpace(configs.GetProxyPool()) == "" {
-		return
-	}
-	b := s.dropSharedBrowser()
-	if b != nil {
-		b.Close()
-	}
 }
 
 func (s *XiaohongshuService) dropSharedBrowser() *browser.Browser {
