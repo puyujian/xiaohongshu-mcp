@@ -407,8 +407,11 @@ wget https://raw.githubusercontent.com/xpzouying/xiaohongshu-mcp/main/docker/doc
 # 或者如果已经克隆了项目，进入 docker 目录
 cd docker
 
-# 启动服务
+# 直接使用远端镜像启动服务
 docker compose up -d
+
+# 如果你已经 clone 了仓库，并且想把本地最新代码构建进容器
+docker compose up -d --build
 
 # 查看日志
 docker compose logs -f

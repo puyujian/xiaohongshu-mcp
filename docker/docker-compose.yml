@@ -1,5 +1,8 @@
 services:
   xiaohongshu-mcp:
+    build:
+      context: ..
+      dockerfile: Dockerfile
     image: ghcr.io/puyujian/xiaohongshu-mcp:latest
     container_name: xiaohongshu-mcp-dingding
     restart: unless-stopped

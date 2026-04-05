@@ -387,8 +387,12 @@ wget https://raw.githubusercontent.com/xpzouying/xiaohongshu-mcp/main/docker/doc
 # Or if you've already cloned the project, enter the docker directory
 cd docker
 
-# Start service
+# Start service with the remote image
 docker compose up -d
+
+# If you've already cloned the repo and want to rebuild the container
+# from your local latest code
+docker compose up -d --build
 
 # View logs
 docker compose logs -f

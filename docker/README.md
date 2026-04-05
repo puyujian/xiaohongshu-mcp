@@ -43,21 +43,24 @@ docker build -t xpzouying/xiaohongshu-mcp .
 
 ## 2. 手动 Docker Compose
 
-> **国内用户提示**：如需使用阿里云镜像源，请修改 `docker-compose.yml` 文件，注释掉 Docker Hub 镜像行，取消阿里云镜像行的注释：
-> ```yaml
-> # image: xpzouying/xiaohongshu-mcp
-> image: crpi-hocnvtkomt7w9v8t.cn-beijing.personal.cr.aliyuncs.com/xpzouying/xiaohongshu-mcp
-> ```
+> 当前仓库里的 `docker-compose.yml` 同时保留了 `image` 和 `build`。
+>
+> - 只想跑官方镜像：直接 `docker compose up -d`
+> - 已经 clone 仓库，想把**本地最新代码**打进容器：使用 `docker compose up -d --build`
 
 ```bash
 # 注意：在 docker-compose.yml 文件的同一个目录，或者手动指定 docker-compose.yml。
 
 # --- 启动 docker 容器 ---
-# 启动 docker-compose
+# 1) 直接使用 compose 中的远端镜像启动
 docker compose up -d
 
+# 2) 使用当前仓库本地代码重新构建并启动
+# 适用于你刚 merge / 修改完代码，想把最新代码放进 Docker
+docker compose up -d --build
+
 # 查看日志
-docker logs -f xpzouying/xiaohongshu-mcp
+docker logs -f xiaohongshu-mcp-dingding
 
 # 或者
 docker compose logs -f
@@ -73,13 +76,17 @@ docker compose logs -f
 docker compose stop
 
 # 查看实时日志
-docker logs -f xpzouying/xiaohongshu-mcp
+docker logs -f xiaohongshu-mcp-dingding
 
 # 进入容器
-docker exec -it xiaohongshu-mcp bash
+docker exec -it xiaohongshu-mcp-dingding bash
 
-# 手动更新容器
-docker compose pull && docker compose up -d
+# 手动更新官方镜像容器
+docker compose pull
+docker compose up -d
+
+# 使用本地最新代码更新容器
+docker compose up -d --build
 ```
 
 ## 3. 使用 MCP-Inspector 进行连接
