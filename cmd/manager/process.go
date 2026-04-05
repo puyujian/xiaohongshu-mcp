@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	envCookiesPath = "COOKIES_PATH"
-	envXHSProxy    = "XHS_PROXY"
+	envCookiesPath     = "COOKIES_PATH"
+	envXHSProxy        = "XHS_PROXY"
+	envXHSProxyPoolURL = "XHS_PROXY_POOL_URL"
 )
 
 // DerivedPaths 派生路径
@@ -29,10 +30,11 @@ type DerivedPaths struct {
 
 // ProcessStatus 进程状态
 type ProcessStatus struct {
-	Running   bool
-	PID       int
-	StartedAt string
-	LastError string
+	Running        bool
+	PID            int
+	StartedAt      string
+	LastError      string
+	EffectiveProxy string
 }
 
 // StartUserParams 启动参数
@@ -44,11 +46,12 @@ type StartUserParams struct {
 }
 
 type runningProc struct {
-	cmd       *exec.Cmd
-	logFile   *os.File
-	startedAt time.Time
-	lastError string
-	done      chan error
+	cmd            *exec.Cmd
+	logFile        *os.File
+	startedAt      time.Time
+	lastError      string
+	effectiveProxy string
+	done           chan error
 }
 
 // ProcessManager 进程管理器
@@ -83,10 +86,11 @@ func (pm *ProcessManager) GetStatus(userID string) ProcessStatus {
 		return ProcessStatus{Running: false}
 	}
 	return ProcessStatus{
-		Running:   true,
-		PID:       p.cmd.Process.Pid,
-		StartedAt: p.startedAt.Format(time.RFC3339),
-		LastError: p.lastError,
+		Running:        true,
+		PID:            p.cmd.Process.Pid,
+		StartedAt:      p.startedAt.Format(time.RFC3339),
+		LastError:      p.lastError,
+		EffectiveProxy: p.effectiveProxy,
 	}
 }
 
@@ -147,15 +151,15 @@ func (pm *ProcessManager) StartUser(ctx context.Context, params StartUserParams)
 		"-port=:" + strconv.Itoa(params.User.Port),
 		"-user-data-dir=" + paths.UserDataDir,
 	}
-	if params.User.Proxy != "" {
-		args = append(args, "-proxy="+params.User.Proxy)
+	if proxy := strings.TrimSpace(params.User.Proxy); proxy != "" {
+		args = append(args, "-proxy="+proxy)
 	}
 	if ua := strings.TrimSpace(params.User.UserAgent); ua != "" {
 		args = append(args, "-user-agent="+ua)
 	}
 
 	cmd := exec.Command(params.BinPath, args...)
-	cmd.Env = append(buildChildEnvForUser(params.User.Proxy), envCookiesPath+"="+paths.CookiesPath)
+	cmd.Env = append(buildChildEnvForUser(params.User.Proxy, params.User.ProxyPool), envCookiesPath+"="+paths.CookiesPath)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
@@ -275,7 +279,7 @@ func ensureDirs(p DerivedPaths) error {
 	return nil
 }
 
-func buildChildEnvForUser(proxy string) []string {
+func buildChildEnvForUser(proxy, proxyPoolURL string) []string {
 	source := os.Environ()
 	env := make([]string, 0, len(source)+2)
 	for _, item := range source {
@@ -293,12 +297,16 @@ func buildChildEnvForUser(proxy string) []string {
 	if proxy != "" {
 		env = append(env, envXHSProxy+"="+proxy)
 	}
+	proxyPoolURL = strings.TrimSpace(proxyPoolURL)
+	if proxyPoolURL != "" {
+		env = append(env, envXHSProxyPoolURL+"="+proxyPoolURL)
+	}
 	return env
 }
 
 func isProxyRelatedEnvKey(key string) bool {
 	switch strings.ToUpper(strings.TrimSpace(key)) {
-	case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", envXHSProxy:
+	case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", envXHSProxy, envXHSProxyPoolURL:
 		return true
 	default:
 		return false

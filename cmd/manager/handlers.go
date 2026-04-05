@@ -36,11 +36,13 @@ func (a *App) HandleIndex(c *gin.Context) {
 }
 
 type userView struct {
-	ID        string `json:"id"`
-	Port      int    `json:"port"`
-	Proxy     string `json:"proxy"`
-	UserAgent string `json:"user_agent"`
-	AutoStart bool   `json:"auto_start"`
+	ID             string `json:"id"`
+	Port           int    `json:"port"`
+	Proxy          string `json:"proxy"`
+	ProxyPool      string `json:"proxy_pool_url,omitempty"`
+	EffectiveProxy string `json:"effective_proxy,omitempty"`
+	UserAgent      string `json:"user_agent"`
+	AutoStart      bool   `json:"auto_start"`
 
 	URL string `json:"url"`
 
@@ -63,17 +65,19 @@ type usersResponse struct {
 }
 
 type managerUserView struct {
-	ID        string `json:"id"`
-	Port      int    `json:"port"`
-	Proxy     string `json:"proxy"`
-	UserAgent string `json:"user_agent"`
-	AutoStart bool   `json:"auto_start"`
-	URL       string `json:"url"`
-	Running   bool   `json:"running"`
-	PID       int    `json:"pid"`
-	HealthOK  bool   `json:"health_ok"`
-	StartedAt string `json:"started_at,omitempty"`
-	LastError string `json:"last_error,omitempty"`
+	ID             string `json:"id"`
+	Port           int    `json:"port"`
+	Proxy          string `json:"proxy"`
+	ProxyPool      string `json:"proxy_pool_url,omitempty"`
+	EffectiveProxy string `json:"effective_proxy,omitempty"`
+	UserAgent      string `json:"user_agent"`
+	AutoStart      bool   `json:"auto_start"`
+	URL            string `json:"url"`
+	Running        bool   `json:"running"`
+	PID            int    `json:"pid"`
+	HealthOK       bool   `json:"health_ok"`
+	StartedAt      string `json:"started_at,omitempty"`
+	LastError      string `json:"last_error,omitempty"`
 }
 
 type managerUsersResponse struct {
@@ -93,36 +97,40 @@ func (a *App) buildUserView(dataDir string, u UserConfig) userView {
 		healthOK = a.proc.CheckHealth(u.Port, 800*time.Millisecond)
 	}
 	return userView{
-		ID:          u.ID,
-		Port:        u.Port,
-		Proxy:       u.Proxy,
-		UserAgent:   u.UserAgent,
-		AutoStart:   u.AutoStart,
-		URL:         fmt.Sprintf("http://127.0.0.1:%d", u.Port),
-		CookiesPath: derived.CookiesPath,
-		UserDataDir: derived.UserDataDir,
-		LogFile:     derived.LogFile,
-		Running:     st.Running,
-		PID:         st.PID,
-		HealthOK:    healthOK,
-		StartedAt:   st.StartedAt,
-		LastError:   st.LastError,
+		ID:             u.ID,
+		Port:           u.Port,
+		Proxy:          u.Proxy,
+		ProxyPool:      u.ProxyPool,
+		EffectiveProxy: st.EffectiveProxy,
+		UserAgent:      u.UserAgent,
+		AutoStart:      u.AutoStart,
+		URL:            fmt.Sprintf("http://127.0.0.1:%d", u.Port),
+		CookiesPath:    derived.CookiesPath,
+		UserDataDir:    derived.UserDataDir,
+		LogFile:        derived.LogFile,
+		Running:        st.Running,
+		PID:            st.PID,
+		HealthOK:       healthOK,
+		StartedAt:      st.StartedAt,
+		LastError:      st.LastError,
 	}
 }
 
 func toManagerUserView(v userView) managerUserView {
 	return managerUserView{
-		ID:        v.ID,
-		Port:      v.Port,
-		Proxy:     v.Proxy,
-		UserAgent: v.UserAgent,
-		AutoStart: v.AutoStart,
-		URL:       v.URL,
-		Running:   v.Running,
-		PID:       v.PID,
-		HealthOK:  v.HealthOK,
-		StartedAt: v.StartedAt,
-		LastError: v.LastError,
+		ID:             v.ID,
+		Port:           v.Port,
+		Proxy:          v.Proxy,
+		ProxyPool:      v.ProxyPool,
+		EffectiveProxy: v.EffectiveProxy,
+		UserAgent:      v.UserAgent,
+		AutoStart:      v.AutoStart,
+		URL:            v.URL,
+		Running:        v.Running,
+		PID:            v.PID,
+		HealthOK:       v.HealthOK,
+		StartedAt:      v.StartedAt,
+		LastError:      v.LastError,
 	}
 }
 
@@ -181,9 +189,10 @@ func (a *App) GetPublicUser(c *gin.Context) {
 }
 
 type createUserReq struct {
-	ID    string `json:"id"`
-	Port  int    `json:"port"`
-	Proxy string `json:"proxy"`
+	ID        string `json:"id"`
+	Port      int    `json:"port"`
+	Proxy     string `json:"proxy"`
+	ProxyPool string `json:"proxy_pool_url"`
 }
 
 // CreateUser 创建用户
@@ -195,11 +204,13 @@ func (a *App) CreateUser(c *gin.Context) {
 	}
 	req.ID = strings.TrimSpace(req.ID)
 	req.Proxy = strings.TrimSpace(req.Proxy)
+	req.ProxyPool = strings.TrimSpace(req.ProxyPool)
 
 	if err := a.store.CreateUser(UserConfig{
-		ID:    req.ID,
-		Port:  req.Port,
-		Proxy: req.Proxy,
+		ID:        req.ID,
+		Port:      req.Port,
+		Proxy:     req.Proxy,
+		ProxyPool: req.ProxyPool,
 	}); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -208,8 +219,9 @@ func (a *App) CreateUser(c *gin.Context) {
 }
 
 type updateUserReq struct {
-	Port  int    `json:"port"`
-	Proxy string `json:"proxy"`
+	Port      int    `json:"port"`
+	Proxy     string `json:"proxy"`
+	ProxyPool string `json:"proxy_pool_url"`
 }
 
 // UpdateUser 更新用户
@@ -230,11 +242,13 @@ func (a *App) UpdateUser(c *gin.Context) {
 		return
 	}
 	req.Proxy = strings.TrimSpace(req.Proxy)
+	req.ProxyPool = strings.TrimSpace(req.ProxyPool)
 
 	if err := a.store.UpdateUser(id, UserConfig{
-		ID:    id,
-		Port:  req.Port,
-		Proxy: req.Proxy,
+		ID:        id,
+		Port:      req.Port,
+		Proxy:     req.Proxy,
+		ProxyPool: req.ProxyPool,
 	}); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

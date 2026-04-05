@@ -3,7 +3,8 @@ package configs
 var (
 	useHeadless = true
 	binPath     = ""
-	proxy       = "" // 代理地址
+	proxy       = "" // 登录/发布代理地址
+	proxyPool   = "" // 登录/发布代理池地址
 	userAgent   = "" // 浏览器 User-Agent
 	userDataDir = "" // 用户数据目录
 )
@@ -25,14 +26,24 @@ func GetBinPath() string {
 	return binPath
 }
 
-// SetProxy 设置代理地址
+// SetProxy 设置登录/发布代理地址
 func SetProxy(p string) {
 	proxy = p
 }
 
-// GetProxy 获取代理地址
+// GetProxy 获取登录/发布代理地址
 func GetProxy() string {
 	return proxy
+}
+
+// SetProxyPool 设置登录/发布代理池地址
+func SetProxyPool(p string) {
+	proxyPool = p
+}
+
+// GetProxyPool 获取登录/发布代理池地址
+func GetProxyPool() string {
+	return proxyPool
 }
 
 // SetUserAgent 设置浏览器 User-Agent

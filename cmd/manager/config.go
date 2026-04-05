@@ -19,6 +19,7 @@ type UserConfig struct {
 	ID        string `json:"id"`
 	Port      int    `json:"port"`
 	Proxy     string `json:"proxy,omitempty"`
+	ProxyPool string `json:"proxy_pool_url,omitempty"`
 	UserAgent string `json:"user_agent,omitempty"` // 浏览器 User-Agent（首次创建时自动生成）
 	AutoStart bool   `json:"auto_start,omitempty"` // 上次运行态，manager 重启时自动恢复
 }
@@ -209,6 +210,7 @@ func (s *Store) UpdateUser(id string, patch UserConfig) error {
 		}
 		// 允许清空 proxy
 		s.cfg.Users[i].Proxy = patch.Proxy
+		s.cfg.Users[i].ProxyPool = patch.ProxyPool
 		break
 	}
 	if !found {
@@ -356,6 +358,22 @@ func validateUser(u UserConfig) error {
 		}
 		if strings.ContainsAny(ua, "\r\n") {
 			return fmt.Errorf("user_agent 不允许包含换行符")
+		}
+	}
+	if proxy := strings.TrimSpace(u.Proxy); proxy != "" {
+		if len(proxy) > 2048 {
+			return fmt.Errorf("proxy 过长（最大 2048 字符）")
+		}
+		if strings.ContainsAny(proxy, "\r\n") {
+			return fmt.Errorf("proxy 不允许包含换行符")
+		}
+	}
+	if proxyPool := strings.TrimSpace(u.ProxyPool); proxyPool != "" {
+		if len(proxyPool) > 4096 {
+			return fmt.Errorf("proxy_pool_url 过长（最大 4096 字符）")
+		}
+		if strings.ContainsAny(proxyPool, "\r\n") {
+			return fmt.Errorf("proxy_pool_url 不允许包含换行符")
 		}
 	}
 	return nil

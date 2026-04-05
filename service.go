@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/xpzouying/xiaohongshu-mcp/cookies"
 	"github.com/xpzouying/xiaohongshu-mcp/pkg/downloader"
 	"github.com/xpzouying/xiaohongshu-mcp/pkg/flowdebug"
+	"github.com/xpzouying/xiaohongshu-mcp/pkg/proxyutil"
 	"github.com/xpzouying/xiaohongshu-mcp/pkg/xhsutil"
 	"github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
 )
@@ -34,8 +36,9 @@ type XiaohongshuService struct {
 	loginPageMu     sync.RWMutex
 
 	// 共享浏览器：同一份 UserDataDir 只能被一个 Chrome 进程使用
-	browserMu     sync.Mutex
-	sharedBrowser *browser.Browser
+	browserMu          sync.Mutex
+	sharedBrowser      *browser.Browser
+	sharedBrowserProxy string
 
 	// 可视化调试：发布流程会话（步骤/网络/控制台/暂停）
 	flowDebug *FlowDebugCenter
@@ -50,11 +53,7 @@ func NewXiaohongshuService() *XiaohongshuService {
 
 // Close 在服务退出时调用，统一释放共享 Chrome 进程
 func (s *XiaohongshuService) Close() {
-	s.browserMu.Lock()
-	b := s.sharedBrowser
-	s.sharedBrowser = nil
-	s.browserMu.Unlock()
-
+	b := s.dropSharedBrowser()
 	if b != nil {
 		b.Close()
 	}
@@ -175,7 +174,11 @@ func (s *XiaohongshuService) CheckLoginStatus(ctx context.Context) (*LoginStatus
 	}
 
 	// 没有活跃页面，使用共享浏览器检查
-	b, err := s.getBrowser()
+	proxy, err := s.resolveLoginPublishProxy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	b, err := s.getBrowser(proxy)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +190,7 @@ func (s *XiaohongshuService) CheckLoginStatus(ctx context.Context) (*LoginStatus
 
 	isLoggedIn, err := loginAction.CheckLoginStatus(ctx)
 	if err != nil {
+		s.resetProxyBrowserOnFailure()
 		return nil, err
 	}
 
@@ -200,7 +204,11 @@ func (s *XiaohongshuService) CheckLoginStatus(ctx context.Context) (*LoginStatus
 
 // GetLoginQrcode 获取登录的扫码二维码
 func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeResponse, error) {
-	b, err := s.getBrowser()
+	proxy, err := s.resolveLoginPublishProxy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	b, err := s.getBrowser(proxy)
 	if err != nil {
 		return nil, err
 	}
@@ -228,6 +236,7 @@ func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeRe
 		defer deferFunc()
 	}
 	if err != nil {
+		s.resetProxyBrowserOnFailure()
 		return nil, err
 	}
 
@@ -317,8 +326,14 @@ func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishReq
 
 	// 处理图片：下载URL图片或使用本地路径
 	sess.Step("处理图片", map[string]any{"count": len(req.Images)})
-	imagePaths, err := s.processImages(req.Images)
+	publishProxy, err := s.resolveLoginPublishProxy(ctx)
 	if err != nil {
+		endErr = err
+		return nil, err
+	}
+	imagePaths, err := s.processImages(req.Images, publishProxy)
+	if err != nil {
+		s.resetProxyBrowserOnFailure()
 		endErr = err
 		return nil, err
 	}
@@ -365,8 +380,9 @@ func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishReq
 	sess.Step("进入发布页并执行自动化流程", nil)
 	publishCtx, cancel := newPublishExecutionContext(dbgCtx)
 	defer cancel()
-	endErr = s.publishContent(publishCtx, content, sess)
+	endErr = s.publishContent(publishCtx, content, sess, publishProxy)
 	if endErr != nil {
+		s.resetProxyBrowserOnFailure()
 		message, details := explainPublishError("图文笔记发布", endErr)
 		logrus.WithFields(logrus.Fields{
 			"title":      content.Title,
@@ -389,14 +405,25 @@ func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishReq
 }
 
 // processImages 处理图片列表，支持URL下载和本地路径
-func (s *XiaohongshuService) processImages(images []string) ([]string, error) {
-	processor := downloader.NewImageProcessor()
+func (s *XiaohongshuService) processImages(images []string, proxy string) ([]string, error) {
+	var (
+		processor *downloader.ImageProcessor
+		err       error
+	)
+	if strings.TrimSpace(proxy) != "" {
+		processor, err = downloader.NewImageProcessorWithProxy(proxy)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		processor = downloader.NewImageProcessor()
+	}
 	return processor.ProcessImages(images)
 }
 
 // publishContent 执行内容发布
-func (s *XiaohongshuService) publishContent(ctx context.Context, content xiaohongshu.PublishImageContent, sess *FlowDebugSession) error {
-	b, err := s.getBrowser()
+func (s *XiaohongshuService) publishContent(ctx context.Context, content xiaohongshu.PublishImageContent, sess *FlowDebugSession, proxy string) error {
+	b, err := s.getBrowser(proxy)
 	if err != nil {
 		return err
 	}
@@ -454,6 +481,11 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 
 	// 解析定时发布时间
 	var scheduleTime *time.Time
+	publishProxy, err := s.resolveLoginPublishProxy(ctx)
+	if err != nil {
+		endErr = err
+		return nil, err
+	}
 	if req.ScheduleAt != "" {
 		t, err := time.Parse(time.RFC3339, req.ScheduleAt)
 		if err != nil {
@@ -493,8 +525,9 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 	sess.Step("进入发布页并执行自动化流程", nil)
 	publishCtx, cancel := newPublishExecutionContext(dbgCtx)
 	defer cancel()
-	endErr = s.publishVideo(publishCtx, content, sess)
+	endErr = s.publishVideo(publishCtx, content, sess, publishProxy)
 	if endErr != nil {
+		s.resetProxyBrowserOnFailure()
 		message, details := explainPublishError("视频笔记发布", endErr)
 		logrus.WithFields(logrus.Fields{
 			"title":      content.Title,
@@ -516,8 +549,8 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 }
 
 // publishVideo 执行视频发布
-func (s *XiaohongshuService) publishVideo(ctx context.Context, content xiaohongshu.PublishVideoContent, sess *FlowDebugSession) error {
-	b, err := s.getBrowser()
+func (s *XiaohongshuService) publishVideo(ctx context.Context, content xiaohongshu.PublishVideoContent, sess *FlowDebugSession, proxy string) error {
+	b, err := s.getBrowser(proxy)
 	if err != nil {
 		return err
 	}
@@ -546,7 +579,7 @@ func (s *XiaohongshuService) publishVideo(ctx context.Context, content xiaohongs
 
 // ListFeeds 获取Feeds列表
 func (s *XiaohongshuService) ListFeeds(ctx context.Context) (*FeedsListResponse, error) {
-	b, err := s.getBrowser()
+	b, err := s.getBrowser("")
 	if err != nil {
 		return nil, err
 	}
@@ -573,7 +606,7 @@ func (s *XiaohongshuService) ListFeeds(ctx context.Context) (*FeedsListResponse,
 }
 
 func (s *XiaohongshuService) SearchFeeds(ctx context.Context, keyword string, filters ...xiaohongshu.FilterOption) (*FeedsListResponse, error) {
-	b, err := s.getBrowser()
+	b, err := s.getBrowser("")
 	if err != nil {
 		return nil, err
 	}
@@ -603,7 +636,7 @@ func (s *XiaohongshuService) GetFeedDetail(ctx context.Context, feedID, xsecToke
 
 // GetFeedDetailWithConfig 使用配置获取Feed详情
 func (s *XiaohongshuService) GetFeedDetailWithConfig(ctx context.Context, feedID, xsecToken string, loadAllComments bool, config xiaohongshu.CommentLoadConfig) (*FeedDetailResponse, error) {
-	b, err := s.getBrowser()
+	b, err := s.getBrowser("")
 	if err != nil {
 		return nil, err
 	}
@@ -630,7 +663,7 @@ func (s *XiaohongshuService) GetFeedDetailWithConfig(ctx context.Context, feedID
 
 // UserProfile 获取用户信息
 func (s *XiaohongshuService) UserProfile(ctx context.Context, userID, xsecToken string) (*UserProfileResponse, error) {
-	b, err := s.getBrowser()
+	b, err := s.getBrowser("")
 	if err != nil {
 		return nil, err
 	}
@@ -679,7 +712,7 @@ func (s *XiaohongshuService) GetNotificationMentions(ctx context.Context) (*Noti
 
 // PostCommentToFeed 发表评论到Feed
 func (s *XiaohongshuService) PostCommentToFeed(ctx context.Context, feedID, xsecToken, content string) (*PostCommentResponse, error) {
-	b, err := s.getBrowser()
+	b, err := s.getBrowser("")
 	if err != nil {
 		return nil, err
 	}
@@ -698,7 +731,7 @@ func (s *XiaohongshuService) PostCommentToFeed(ctx context.Context, feedID, xsec
 
 // LikeFeed 点赞笔记
 func (s *XiaohongshuService) LikeFeed(ctx context.Context, feedID, xsecToken string) (*ActionResult, error) {
-	b, err := s.getBrowser()
+	b, err := s.getBrowser("")
 	if err != nil {
 		return nil, err
 	}
@@ -715,7 +748,7 @@ func (s *XiaohongshuService) LikeFeed(ctx context.Context, feedID, xsecToken str
 
 // UnlikeFeed 取消点赞笔记
 func (s *XiaohongshuService) UnlikeFeed(ctx context.Context, feedID, xsecToken string) (*ActionResult, error) {
-	b, err := s.getBrowser()
+	b, err := s.getBrowser("")
 	if err != nil {
 		return nil, err
 	}
@@ -732,7 +765,7 @@ func (s *XiaohongshuService) UnlikeFeed(ctx context.Context, feedID, xsecToken s
 
 // FavoriteFeed 收藏笔记
 func (s *XiaohongshuService) FavoriteFeed(ctx context.Context, feedID, xsecToken string) (*ActionResult, error) {
-	b, err := s.getBrowser()
+	b, err := s.getBrowser("")
 	if err != nil {
 		return nil, err
 	}
@@ -749,7 +782,7 @@ func (s *XiaohongshuService) FavoriteFeed(ctx context.Context, feedID, xsecToken
 
 // UnfavoriteFeed 取消收藏笔记
 func (s *XiaohongshuService) UnfavoriteFeed(ctx context.Context, feedID, xsecToken string) (*ActionResult, error) {
-	b, err := s.getBrowser()
+	b, err := s.getBrowser("")
 	if err != nil {
 		return nil, err
 	}
@@ -766,7 +799,7 @@ func (s *XiaohongshuService) UnfavoriteFeed(ctx context.Context, feedID, xsecTok
 
 // ReplyCommentToFeed 回复指定评论
 func (s *XiaohongshuService) ReplyCommentToFeed(ctx context.Context, feedID, xsecToken, commentID, userID, content string) (*ReplyCommentResponse, error) {
-	b, err := s.getBrowser()
+	b, err := s.getBrowser("")
 	if err != nil {
 		return nil, err
 	}
@@ -789,11 +822,12 @@ func (s *XiaohongshuService) ReplyCommentToFeed(ctx context.Context, feedID, xse
 	}, nil
 }
 
-func createBrowser() (*browser.Browser, error) {
+func createBrowser(proxy string) (*browser.Browser, error) {
 	opts := []browser.Option{
 		browser.WithBinPath(configs.GetBinPath()),
 	}
-	if proxy := configs.GetProxy(); proxy != "" {
+	if proxy = strings.TrimSpace(proxy); proxy != "" {
+		logrus.Infof("登录/发布使用代理: %s", proxyutil.SanitizeForLog(proxy))
 		opts = append(opts, browser.WithProxy(proxy))
 	}
 	if userDataDir := configs.GetUserDataDir(); userDataDir != "" {
@@ -806,16 +840,27 @@ func createBrowser() (*browser.Browser, error) {
 }
 
 // getBrowser 获取共享浏览器实例（懒加载）
-func (s *XiaohongshuService) getBrowser() (*browser.Browser, error) {
+func (s *XiaohongshuService) getBrowser(proxy string) (*browser.Browser, error) {
 	s.browserMu.Lock()
 	defer s.browserMu.Unlock()
 
+	proxy = strings.TrimSpace(proxy)
+	if s.sharedBrowser != nil && s.sharedBrowserProxy != proxy {
+		s.loginPageMu.Lock()
+		s.activeLoginPage = nil
+		s.loginPageMu.Unlock()
+		s.sharedBrowser.Close()
+		s.sharedBrowser = nil
+		s.sharedBrowserProxy = ""
+	}
+
 	if s.sharedBrowser == nil {
-		b, err := createBrowser()
+		b, err := createBrowser(proxy)
 		if err != nil {
 			return nil, err
 		}
 		s.sharedBrowser = b
+		s.sharedBrowserProxy = proxy
 	}
 	return s.sharedBrowser, nil
 }
@@ -837,7 +882,7 @@ func saveCookies(page *rod.Page) error {
 
 // withBrowserPage 执行需要浏览器页面的操作的通用函数
 func (s *XiaohongshuService) withBrowserPage(fn func(*rod.Page) error) error {
-	b, err := s.getBrowser()
+	b, err := s.getBrowser("")
 	if err != nil {
 		return err
 	}
@@ -845,6 +890,34 @@ func (s *XiaohongshuService) withBrowserPage(fn func(*rod.Page) error) error {
 	defer page.Close()
 
 	return fn(page)
+}
+
+func (s *XiaohongshuService) resolveLoginPublishProxy(ctx context.Context) (string, error) {
+	return proxyutil.Resolve(ctx, configs.GetProxy(), configs.GetProxyPool())
+}
+
+func (s *XiaohongshuService) resetProxyBrowserOnFailure() {
+	if strings.TrimSpace(configs.GetProxy()) != "" || strings.TrimSpace(configs.GetProxyPool()) == "" {
+		return
+	}
+	b := s.dropSharedBrowser()
+	if b != nil {
+		b.Close()
+	}
+}
+
+func (s *XiaohongshuService) dropSharedBrowser() *browser.Browser {
+	s.browserMu.Lock()
+	b := s.sharedBrowser
+	s.sharedBrowser = nil
+	s.sharedBrowserProxy = ""
+	s.browserMu.Unlock()
+
+	s.loginPageMu.Lock()
+	s.activeLoginPage = nil
+	s.loginPageMu.Unlock()
+
+	return b
 }
 
 // GetMyProfile 获取当前登录用户的个人信息

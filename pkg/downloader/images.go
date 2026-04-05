@@ -13,6 +13,7 @@ import (
 
 	"github.com/h2non/filetype"
 	"github.com/pkg/errors"
+	"github.com/xpzouying/xiaohongshu-mcp/pkg/proxyutil"
 )
 
 // ImageDownloader 图片下载器
@@ -23,17 +24,36 @@ type ImageDownloader struct {
 
 // NewImageDownloader 创建图片下载器
 func NewImageDownloader(savePath string) *ImageDownloader {
+	downloader, err := NewImageDownloaderWithProxy(savePath, "")
+	if err != nil {
+		panic(fmt.Sprintf("failed to create image downloader: %v", err))
+	}
+	return downloader
+}
+
+func NewImageDownloaderWithProxy(savePath, proxy string) (*ImageDownloader, error) {
 	// 确保保存目录存在
 	if err := os.MkdirAll(savePath, 0755); err != nil {
-		panic(fmt.Sprintf("failed to create save path: %v", err))
+		return nil, fmt.Errorf("failed to create save path: %w", err)
+	}
+
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	if strings.TrimSpace(proxy) != "" {
+		proxyURL, err := proxyutil.NormalizeHTTPProxy(proxy)
+		if err != nil {
+			return nil, err
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = http.ProxyURL(proxyURL)
+		client.Transport = transport
 	}
 
 	return &ImageDownloader{
-		savePath: savePath,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-	}
+		savePath:   savePath,
+		httpClient: client,
+	}, nil
 }
 
 // DownloadImage 下载图片

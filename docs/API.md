@@ -986,6 +986,8 @@ GET /api/manager/v1/users
       "id": "user1",
       "port": 18060,
       "proxy": "",
+      "proxy_pool_url": "",
+      "effective_proxy": "",
       "user_agent": "Mozilla/5.0 ...",
       "auto_start": true,
       "url": "http://127.0.0.1:18060",
@@ -998,6 +1000,8 @@ GET /api/manager/v1/users
       "id": "user2",
       "port": 18061,
       "proxy": "",
+      "proxy_pool_url": "",
+      "effective_proxy": "",
       "user_agent": "Mozilla/5.0 ...",
       "auto_start": false,
       "url": "http://127.0.0.1:18061",
@@ -1035,10 +1039,12 @@ GET /api/manager/v1/users/user1
 ```json
 {
   "user": {
-    "id": "user1",
-    "port": 18060,
-    "proxy": "",
-    "user_agent": "Mozilla/5.0 ...",
+      "id": "user1",
+      "port": 18060,
+      "proxy": "",
+      "proxy_pool_url": "",
+      "effective_proxy": "",
+      "user_agent": "Mozilla/5.0 ...",
     "auto_start": true,
     "url": "http://127.0.0.1:18060",
     "running": true,
@@ -1071,7 +1077,8 @@ Content-Type: application/json
 {
   "id": "user3",
   "port": 18062,
-  "proxy": "http://127.0.0.1:7890"
+  "proxy": "http://127.0.0.1:7890",
+  "proxy_pool_url": "http://v2.api.juliangip.com/company/dynamic/getips?..."
 }
 ```
 
@@ -1079,6 +1086,7 @@ Content-Type: application/json
 - `id` (string, required): 账号唯一 ID，只允许字母、数字、下划线、连字符
 - `port` (integer, required): 账号实例监听端口，范围 `1~65535`
 - `proxy` (string, optional): 代理地址；传空字符串表示不使用代理
+- `proxy_pool_url` (string, optional): 代理池提取地址；启动账号时会先请求该地址，再把响应中的第一条代理写入本次运行实例
 
 **成功响应**
 ```http
@@ -1118,7 +1126,8 @@ PUT /api/admin/v1/users/user3
 ```json
 {
   "port": 18063,
-  "proxy": ""
+  "proxy": "",
+  "proxy_pool_url": ""
 }
 ```
 
@@ -1126,6 +1135,7 @@ PUT /api/admin/v1/users/user3
 - `id` (path, required): 要修改的账号 ID
 - `port` (integer, required): 修改后的实例端口，范围 `1~65535`
 - `proxy` (string, optional): 修改后的代理地址；传空字符串表示清空代理
+- `proxy_pool_url` (string, optional): 修改后的代理池地址；传空字符串表示清空代理池
 
 **成功响应**
 ```http

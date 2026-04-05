@@ -183,6 +183,8 @@
         <input id="fPort" class="w120" placeholder="例如 18061" />
         <div class="muted">proxy</div>
         <input id="fProxy" class="w200" placeholder="例如 http://user:pass@127.0.0.1:7890（可空）" />
+        <div class="muted">proxy_pool_url</div>
+        <input id="fProxyPool" class="w200" placeholder="例如 http://v2.api.juliangip.com/...（可空）" />
       </div>
       <div class="row" style="margin-top: 12px;">
         <button id="btnSave">保存</button>
@@ -207,13 +209,15 @@
       <div class="grid" style="margin-top: 12px;">
         <div class="muted">proxy</div>
         <input id="fBatchProxy" placeholder="输入新代理，留空可清空代理" />
+        <div class="muted">proxy_pool_url</div>
+        <input id="fBatchProxyPool" placeholder="输入代理池地址，留空可清空代理池" />
       </div>
       <div class="row" style="margin-top: 12px;">
         <button id="btnBatchSave" class="primary">应用到已选实例</button>
         <button id="btnBatchCancel">取消</button>
         <div class="right err" id="batchErr"></div>
       </div>
-      <div class="muted" style="margin-top: 8px;">说明：仅修改 proxy，端口和其他配置保持不变。运行中实例需先停止才能修改。</div>
+      <div class="muted" style="margin-top: 8px;">说明：仅修改 proxy / proxy_pool_url，端口和其他配置保持不变。运行中实例需先停止才能修改。</div>
     </div>
   </div>
 
@@ -470,12 +474,14 @@
     const fId = document.getElementById('fId');
     const fPort = document.getElementById('fPort');
     const fProxy = document.getElementById('fProxy');
+    const fProxyPool = document.getElementById('fProxyPool');
     const formErr = document.getElementById('formErr');
     let editingId = null;
 
     // 批量修改 Modal
     const batchModal = document.getElementById('batchModal');
     const fBatchProxy = document.getElementById('fBatchProxy');
+    const fBatchProxyPool = document.getElementById('fBatchProxyPool');
     const batchTargets = document.getElementById('batchTargets');
     const batchErr = document.getElementById('batchErr');
 
@@ -583,6 +589,7 @@
       batchErr.textContent = '';
       batchTargets.textContent = ids.join(', ');
       fBatchProxy.value = '';
+      fBatchProxyPool.value = '';
       batchModal.classList.add('show');
     }
 
@@ -600,6 +607,7 @@
       }
 
       const proxy = (fBatchProxy.value || '').trim();
+      const proxyPool = (fBatchProxyPool.value || '').trim();
       const btn = document.getElementById('btnBatchSave');
       btn.disabled = true;
       btn.textContent = '保存中...';
@@ -621,7 +629,7 @@
         for (const id of ids) {
           const u = byID.get(id);
           try {
-            await api('PUT', `/users/${encodeURIComponent(id)}`, { port: u.port, proxy });
+            await api('PUT', `/users/${encodeURIComponent(id)}`, { port: u.port, proxy, proxy_pool_url: proxyPool });
           } catch (e) {
             failed.push(`${id}: ${e.message}`);
           }
@@ -759,12 +767,14 @@
         fId.disabled = true;
         fPort.value = user.port;
         fProxy.value = user.proxy || '';
+        fProxyPool.value = user.proxy_pool_url || '';
       } else {
         editingId = null;
         fId.value = '';
         fId.disabled = false;
         fPort.value = '';
         fProxy.value = '';
+        fProxyPool.value = '';
       }
     }
     function closeModal() {
@@ -2003,10 +2013,20 @@
           : `<button data-act="start" data-id="${esc(u.id)}">启动</button>`;
         const dis = u.running ? 'disabled' : '';
         const url = u.url ? `<a class="link" href="${esc(u.url)}" target="_blank">${esc(u.url)}</a>` : '-';
+        const proxyLines = [];
         const proxyFull = (u.proxy || '').trim();
-        const proxyDisplay = proxyFull
-          ? `<span class="proxy-text" title="${esc(proxyFull)}">${esc(proxyFull)}</span>`
-          : '<span>-</span>';
+        const proxyPoolFull = (u.proxy_pool_url || '').trim();
+        const effectiveProxyFull = (u.effective_proxy || '').trim();
+        if (proxyFull) {
+          proxyLines.push(`<div><span class="muted">固定:</span> <span class="proxy-text" title="${esc(proxyFull)}">${esc(proxyFull)}</span></div>`);
+        }
+        if (proxyPoolFull) {
+          proxyLines.push(`<div><span class="muted">代理池:</span> <span class="proxy-text" title="${esc(proxyPoolFull)}">${esc(proxyPoolFull)}</span></div>`);
+        }
+        if (effectiveProxyFull) {
+          proxyLines.push(`<div><span class="muted">当前:</span> <span class="proxy-text" title="${esc(effectiveProxyFull)}">${esc(effectiveProxyFull)}</span></div>`);
+        }
+        const proxyDisplay = proxyLines.length ? proxyLines.join('') : '<span>-</span>';
         // UA 显示：截断过长的 UA
         const uaFull = u.user_agent || '(未设置)';
         const uaShort = uaFull.length > 50 ? uaFull.substring(0, 50) + '...' : uaFull;
@@ -2179,13 +2199,14 @@
       const id = (fId.value || '').trim();
       const port = parseInt((fPort.value || '').trim(), 10);
       const proxy = (fProxy.value || '').trim();
+      const proxyPool = (fProxyPool.value || '').trim();
       try {
         if (!id) throw new Error('id 不能为空');
         if (!port || port <= 0) throw new Error('port 非法');
         if (editingId) {
-          await api('PUT', `/users/${encodeURIComponent(editingId)}`, { port, proxy });
+          await api('PUT', `/users/${encodeURIComponent(editingId)}`, { port, proxy, proxy_pool_url: proxyPool });
         } else {
-          await api('POST', '/users', { id, port, proxy });
+          await api('POST', '/users', { id, port, proxy, proxy_pool_url: proxyPool });
         }
         closeModal();
         await refresh();

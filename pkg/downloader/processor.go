@@ -13,9 +13,21 @@ type ImageProcessor struct {
 
 // NewImageProcessor 创建图片处理器
 func NewImageProcessor() *ImageProcessor {
-	return &ImageProcessor{
-		downloader: NewImageDownloader(configs.GetImagesPath()),
+	processor, err := NewImageProcessorWithProxy("")
+	if err != nil {
+		panic(fmt.Sprintf("failed to create image processor: %v", err))
 	}
+	return processor
+}
+
+func NewImageProcessorWithProxy(proxy string) (*ImageProcessor, error) {
+	downloader, err := NewImageDownloaderWithProxy(configs.GetImagesPath(), proxy)
+	if err != nil {
+		return nil, err
+	}
+	return &ImageProcessor{
+		downloader: downloader,
+	}, nil
 }
 
 // ProcessImages 处理图片列表，返回本地文件路径
