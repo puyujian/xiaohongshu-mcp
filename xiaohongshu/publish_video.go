@@ -175,7 +175,6 @@ func waitForPublishButtonClickable(ctx context.Context, page *rod.Page) (*rod.El
 // submitPublishVideo 填写标题、正文、标签并点击发布（等待按钮可点击后再提交）
 func submitPublishVideo(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, visibility string) error {
 	dbg := flowdebug.FromContext(ctx)
-
 	// 标题
 	if dbg != nil {
 		dbg.Step("填写标题", map[string]any{"title_len": len(strings.TrimSpace(title))})

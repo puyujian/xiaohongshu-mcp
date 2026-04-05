@@ -81,7 +81,7 @@ type PublishRequest struct {
 	Content    string   `json:"content" binding:"required"`
 	Images     []string `json:"images" binding:"required,min=1"`
 	Tags       []string `json:"tags,omitempty"`
-	Products   []string `json:"products,omitempty"`
+	Products   []string `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
 	ScheduleAt string   `json:"schedule_at,omitempty"` // 定时发布时间，ISO8601格式，为空则立即发布
 	IsOriginal bool     `json:"is_original,omitempty"` // 是否声明原创
 	Visibility string   `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
@@ -115,7 +115,7 @@ type PublishVideoRequest struct {
 	Content    string   `json:"content" binding:"required"`
 	Video      string   `json:"video" binding:"required"`
 	Tags       []string `json:"tags,omitempty"`
-	Products   []string `json:"products,omitempty"`
+	Products   []string `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
 	ScheduleAt string   `json:"schedule_at,omitempty"` // 定时发布时间，ISO8601格式，为空则立即发布
 	Visibility string   `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
 }

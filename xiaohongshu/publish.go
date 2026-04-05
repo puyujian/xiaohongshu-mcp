@@ -104,7 +104,7 @@ func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent
 		tags = tags[:10]
 	}
 
-	logrus.Infof("发布内容: title=%s, images=%d, tags=%v, products=%d, schedule=%v, original=%v, visibility=%s", content.Title, len(content.ImagePaths), tags, len(content.Products), content.ScheduleTime, content.IsOriginal, content.Visibility)
+	logrus.Infof("发布内容: title=%s, images=%d, tags=%v, products=%v, schedule=%v, original=%v, visibility=%s", content.Title, len(content.ImagePaths), tags, content.Products, content.ScheduleTime, content.IsOriginal, content.Visibility)
 
 	if len(content.Products) > 0 {
 		if dbg != nil {

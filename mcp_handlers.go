@@ -152,7 +152,7 @@ func (s *AppServer) handlePublishContent(ctx context.Context, args map[string]in
 	visibility := parseVisibility(args)
 	// 解析原创参数
 	isOriginal, _ := args["is_original"].(bool)
-	logrus.Infof("MCP: 发布内容 - 标题: %s, 图片数量: %d, 标签数量: %d, 商品数量: %d, 定时: %s, 原创: %v, visibility: %s", title, len(imagePaths), len(tags), len(products), scheduleAt, isOriginal, visibility)
+	logrus.Infof("MCP: 发布内容 - 标题: %s, 图片数量: %d, 标签数量: %d, 商品数量: %d, 定时: %s, 原创: %v, visibility: %s, 商品: %v", title, len(imagePaths), len(tags), len(products), scheduleAt, isOriginal, visibility, products)
 
 	// 构建发布请求
 	req := &PublishRequest{
@@ -214,7 +214,7 @@ func (s *AppServer) handlePublishVideo(ctx context.Context, args map[string]inte
 	// 解析定时发布参数
 	scheduleAt, _ := args["schedule_at"].(string)
 	visibility := parseVisibility(args)
-	logrus.Infof("MCP: 发布视频 - 标题: %s, 标签数量: %d, 商品数量: %d, 定时: %s, visibility: %s", title, len(tags), len(products), scheduleAt, visibility)
+	logrus.Infof("MCP: 发布视频 - 标题: %s, 标签数量: %d, 商品数量: %d, 定时: %s, visibility: %s, 商品: %v", title, len(tags), len(products), scheduleAt, visibility, products)
 
 	// 构建发布请求
 	req := &PublishVideoRequest{
