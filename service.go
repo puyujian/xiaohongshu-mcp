@@ -304,12 +304,6 @@ func (s *XiaohongshuService) ProcessLoginBrowserAction(ctx context.Context, acti
 
 // PublishContent 发布内容
 func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishRequest) (*PublishResponse, error) {
-	return runLoginPublishWithRetry(s, ctx, "图文发布", func(ctx context.Context, proxy string) (*PublishResponse, error) {
-		return s.publishContentOnce(ctx, req, proxy)
-	})
-}
-
-func (s *XiaohongshuService) publishContentOnce(ctx context.Context, req *PublishRequest, publishProxy string) (*PublishResponse, error) {
 	// 创建调试会话（无论是否打开 UI，均记录最近一次流程，便于排查发布失败原因）
 	sess := s.flowDebug.NewSession("publish_image")
 	dbgCtx := flowdebug.WithDebugger(ctx, sess)
@@ -328,94 +322,41 @@ func (s *XiaohongshuService) publishContentOnce(ctx context.Context, req *Publis
 		return nil, endErr
 	}
 
-	// 处理图片：下载URL图片或使用本地路径
-	sess.Step("处理图片", map[string]any{"count": len(req.Images)})
-	imagePaths, err := s.processImages(req.Images, publishProxy)
+	// 非浏览器准备阶段：这里保持直连，避免在代理有效期内消耗下载/校验时间
+	prepared, err := s.preparePublishContent(req, sess)
 	if err != nil {
 		endErr = err
 		return nil, err
 	}
 
-	// 解析定时发布时间
-	var scheduleTime *time.Time
-	if req.ScheduleAt != "" {
-		t, err := time.Parse(time.RFC3339, req.ScheduleAt)
+	resp, err := runLoginPublishWithRetry(s, dbgCtx, "图文发布", func(ctx context.Context, proxy string) (*PublishResponse, error) {
+		sess.Step("进入发布页并执行自动化流程", map[string]any{
+			"images":           len(prepared.Content.ImagePaths),
+			"proxy_deferred":   true,
+			"prepare_direct":   true,
+			"browser_viaProxy": strings.TrimSpace(proxy) != "",
+		})
+
+		publishCtx, cancel := newPublishExecutionContext(ctx)
+		defer cancel()
+
+		err := s.publishContent(publishCtx, prepared.Content, sess, proxy)
 		if err != nil {
-			return nil, fmt.Errorf("定时发布时间格式错误，请使用 ISO8601 格式: %v", err)
-		}
-
-		// 校验定时发布时间范围：1小时至14天
-		now := time.Now()
-		minTime := now.Add(1 * time.Hour)
-		maxTime := now.Add(14 * 24 * time.Hour)
-
-		if t.Before(minTime) {
-			return nil, fmt.Errorf("定时发布时间必须至少在1小时后，当前设置: %s，最早可选: %s",
-				t.Format("2006-01-02 15:04"), minTime.Format("2006-01-02 15:04"))
-		}
-		if t.After(maxTime) {
-			return nil, fmt.Errorf("定时发布时间不能超过14天，当前设置: %s，最晚可选: %s",
-				t.Format("2006-01-02 15:04"), maxTime.Format("2006-01-02 15:04"))
-		}
-
-		scheduleTime = &t
-		logrus.Infof("设置定时发布时间: %s", t.Format("2006-01-02 15:04"))
-	}
-
-	// 构建发布内容
-	content := xiaohongshu.PublishImageContent{
-		Title:        req.Title,
-		Content:      req.Content,
-		Tags:         req.Tags,
-		Products:     req.Products,
-		ImagePaths:   imagePaths,
-		ScheduleTime: scheduleTime,
-		IsOriginal:   req.IsOriginal,
-		Visibility:   req.Visibility,
-	}
-
-	// 执行发布
-	sess.Step("进入发布页并执行自动化流程", nil)
-	publishCtx, cancel := newPublishExecutionContext(dbgCtx)
-	defer cancel()
-	endErr = s.publishContent(publishCtx, content, sess, publishProxy)
-	if endErr != nil {
-		message, details := explainPublishError("图文笔记发布", endErr)
-		logrus.WithFields(logrus.Fields{
-			"title":      content.Title,
-			"step":       details.Step,
-			"reason":     details.Reason,
-			"raw_error":  details.RawError,
-			"suggestion": details.Suggestion,
-		}).Error(message)
-		return nil, endErr
-	}
-
-	response := &PublishResponse{
-		Title:   req.Title,
-		Content: req.Content,
-		Images:  len(imagePaths),
-		Status:  "发布完成",
-	}
-
-	return response, nil
-}
-
-// processImages 处理图片列表，支持URL下载和本地路径
-func (s *XiaohongshuService) processImages(images []string, proxy string) ([]string, error) {
-	var (
-		processor *downloader.ImageProcessor
-		err       error
-	)
-	if strings.TrimSpace(proxy) != "" {
-		processor, err = downloader.NewImageProcessorWithProxy(proxy)
-		if err != nil {
+			message, details := explainPublishError("图文笔记发布", err)
+			logrus.WithFields(logrus.Fields{
+				"title":      prepared.Content.Title,
+				"step":       details.Step,
+				"reason":     details.Reason,
+				"raw_error":  details.RawError,
+				"suggestion": details.Suggestion,
+			}).Error(message)
 			return nil, err
 		}
-	} else {
-		processor = downloader.NewImageProcessor()
-	}
-	return processor.ProcessImages(images)
+
+		return prepared.Response, nil
+	})
+	endErr = err
+	return resp, err
 }
 
 // publishContent 执行内容发布
@@ -448,14 +389,126 @@ func (s *XiaohongshuService) publishContent(ctx context.Context, content xiaohon
 	return action.Publish(ctx, content)
 }
 
-// PublishVideo 发布视频（本地文件）
-func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideoRequest) (*PublishVideoResponse, error) {
-	return runLoginPublishWithRetry(s, ctx, "视频发布", func(ctx context.Context, proxy string) (*PublishVideoResponse, error) {
-		return s.publishVideoOnce(ctx, req, proxy)
-	})
+type preparedPublishContent struct {
+	Content  xiaohongshu.PublishImageContent
+	Response *PublishResponse
 }
 
-func (s *XiaohongshuService) publishVideoOnce(ctx context.Context, req *PublishVideoRequest, publishProxy string) (*PublishVideoResponse, error) {
+type preparedPublishVideo struct {
+	Content  xiaohongshu.PublishVideoContent
+	Response *PublishVideoResponse
+}
+
+func (s *XiaohongshuService) preparePublishContent(req *PublishRequest, sess *FlowDebugSession) (*preparedPublishContent, error) {
+	// 所有非浏览器准备工作保持直连，尽量把代理窗口缩短到真正发布阶段。
+	sess.Step("处理图片", map[string]any{"count": len(req.Images), "direct_prepare": true})
+	imagePaths, err := s.processImages(req.Images)
+	if err != nil {
+		return nil, err
+	}
+
+	scheduleTime, err := parseScheduleTime(req.ScheduleAt)
+	if err != nil {
+		return nil, err
+	}
+
+	content := xiaohongshu.PublishImageContent{
+		Title:        req.Title,
+		Content:      req.Content,
+		Tags:         req.Tags,
+		Products:     req.Products,
+		ImagePaths:   imagePaths,
+		ScheduleTime: scheduleTime,
+		IsOriginal:   req.IsOriginal,
+		Visibility:   req.Visibility,
+	}
+
+	response := &PublishResponse{
+		Title:   req.Title,
+		Content: req.Content,
+		Images:  len(imagePaths),
+		Status:  "发布完成",
+	}
+
+	return &preparedPublishContent{
+		Content:  content,
+		Response: response,
+	}, nil
+}
+
+func (s *XiaohongshuService) preparePublishVideo(req *PublishVideoRequest, sess *FlowDebugSession) (*preparedPublishVideo, error) {
+	sess.Step("校验视频与发布时间", map[string]any{"direct_prepare": true})
+	if req.Video == "" {
+		return nil, fmt.Errorf("必须提供本地视频文件")
+	}
+	if _, err := os.Stat(req.Video); err != nil {
+		return nil, fmt.Errorf("视频文件不存在或不可访问: %v", err)
+	}
+
+	scheduleTime, err := parseScheduleTime(req.ScheduleAt)
+	if err != nil {
+		return nil, err
+	}
+
+	content := xiaohongshu.PublishVideoContent{
+		Title:        req.Title,
+		Content:      req.Content,
+		Tags:         req.Tags,
+		Products:     req.Products,
+		VideoPath:    req.Video,
+		ScheduleTime: scheduleTime,
+		Visibility:   req.Visibility,
+	}
+
+	resp := &PublishVideoResponse{
+		Title:   req.Title,
+		Content: req.Content,
+		Video:   req.Video,
+		Status:  "发布完成",
+	}
+
+	return &preparedPublishVideo{
+		Content:  content,
+		Response: resp,
+	}, nil
+}
+
+func parseScheduleTime(scheduleAt string) (*time.Time, error) {
+	if scheduleAt == "" {
+		return nil, nil
+	}
+
+	t, err := time.Parse(time.RFC3339, scheduleAt)
+	if err != nil {
+		return nil, fmt.Errorf("定时发布时间格式错误，请使用 ISO8601 格式: %v", err)
+	}
+
+	now := time.Now()
+	minTime := now.Add(1 * time.Hour)
+	maxTime := now.Add(14 * 24 * time.Hour)
+
+	if t.Before(minTime) {
+		return nil, fmt.Errorf("定时发布时间必须至少在1小时后，当前设置: %s，最早可选: %s",
+			t.Format("2006-01-02 15:04"), minTime.Format("2006-01-02 15:04"))
+	}
+	if t.After(maxTime) {
+		return nil, fmt.Errorf("定时发布时间不能超过14天，当前设置: %s，最晚可选: %s",
+			t.Format("2006-01-02 15:04"), maxTime.Format("2006-01-02 15:04"))
+	}
+
+	logrus.Infof("设置定时发布时间: %s", t.Format("2006-01-02 15:04"))
+	return &t, nil
+}
+
+// processImages 处理图片列表，支持URL下载和本地路径。
+// 这里固定使用直连，避免在代理有效期内消耗下载和本地预处理时间。
+func (s *XiaohongshuService) processImages(images []string) ([]string, error) {
+	processor := downloader.NewImageProcessor()
+	return processor.ProcessImages(images)
+}
+
+// PublishVideo 发布视频（本地文件）
+func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideoRequest) (*PublishVideoResponse, error) {
 	sess := s.flowDebug.NewSession("publish_video")
 	dbgCtx := flowdebug.WithDebugger(ctx, sess)
 	sess.Step("收到发布视频请求", map[string]any{
@@ -472,77 +525,39 @@ func (s *XiaohongshuService) publishVideoOnce(ctx context.Context, req *PublishV
 		return nil, endErr
 	}
 
-	// 本地视频文件校验
-	if req.Video == "" {
-		endErr = fmt.Errorf("必须提供本地视频文件")
-		return nil, endErr
-	}
-	if _, err := os.Stat(req.Video); err != nil {
-		endErr = fmt.Errorf("视频文件不存在或不可访问: %v", err)
-		return nil, endErr
+	prepared, err := s.preparePublishVideo(req, sess)
+	if err != nil {
+		endErr = err
+		return nil, err
 	}
 
-	// 解析定时发布时间
-	var scheduleTime *time.Time
-	if req.ScheduleAt != "" {
-		t, err := time.Parse(time.RFC3339, req.ScheduleAt)
+	resp, err := runLoginPublishWithRetry(s, dbgCtx, "视频发布", func(ctx context.Context, proxy string) (*PublishVideoResponse, error) {
+		sess.Step("进入发布页并执行自动化流程", map[string]any{
+			"proxy_deferred":   true,
+			"prepare_direct":   true,
+			"browser_viaProxy": strings.TrimSpace(proxy) != "",
+		})
+
+		publishCtx, cancel := newPublishExecutionContext(ctx)
+		defer cancel()
+
+		err := s.publishVideo(publishCtx, prepared.Content, sess, proxy)
 		if err != nil {
-			return nil, fmt.Errorf("定时发布时间格式错误，请使用 ISO8601 格式: %v", err)
+			message, details := explainPublishError("视频笔记发布", err)
+			logrus.WithFields(logrus.Fields{
+				"title":      prepared.Content.Title,
+				"step":       details.Step,
+				"reason":     details.Reason,
+				"raw_error":  details.RawError,
+				"suggestion": details.Suggestion,
+			}).Error(message)
+			return nil, err
 		}
 
-		// 校验定时发布时间范围：1小时至14天
-		now := time.Now()
-		minTime := now.Add(1 * time.Hour)
-		maxTime := now.Add(14 * 24 * time.Hour)
-
-		if t.Before(minTime) {
-			return nil, fmt.Errorf("定时发布时间必须至少在1小时后，当前设置: %s，最早可选: %s",
-				t.Format("2006-01-02 15:04"), minTime.Format("2006-01-02 15:04"))
-		}
-		if t.After(maxTime) {
-			return nil, fmt.Errorf("定时发布时间不能超过14天，当前设置: %s，最晚可选: %s",
-				t.Format("2006-01-02 15:04"), maxTime.Format("2006-01-02 15:04"))
-		}
-
-		scheduleTime = &t
-		logrus.Infof("设置定时发布时间: %s", t.Format("2006-01-02 15:04"))
-	}
-
-	// 构建发布内容
-	content := xiaohongshu.PublishVideoContent{
-		Title:        req.Title,
-		Content:      req.Content,
-		Tags:         req.Tags,
-		Products:     req.Products,
-		VideoPath:    req.Video,
-		ScheduleTime: scheduleTime,
-		Visibility:   req.Visibility,
-	}
-
-	// 执行发布
-	sess.Step("进入发布页并执行自动化流程", nil)
-	publishCtx, cancel := newPublishExecutionContext(dbgCtx)
-	defer cancel()
-	endErr = s.publishVideo(publishCtx, content, sess, publishProxy)
-	if endErr != nil {
-		message, details := explainPublishError("视频笔记发布", endErr)
-		logrus.WithFields(logrus.Fields{
-			"title":      content.Title,
-			"step":       details.Step,
-			"reason":     details.Reason,
-			"raw_error":  details.RawError,
-			"suggestion": details.Suggestion,
-		}).Error(message)
-		return nil, endErr
-	}
-
-	resp := &PublishVideoResponse{
-		Title:   req.Title,
-		Content: req.Content,
-		Video:   req.Video,
-		Status:  "发布完成",
-	}
-	return resp, nil
+		return prepared.Response, nil
+	})
+	endErr = err
+	return resp, err
 }
 
 // publishVideo 执行视频发布
