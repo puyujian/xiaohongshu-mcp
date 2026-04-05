@@ -300,6 +300,7 @@ GET /api/v1/feeds/list
           "interactInfo": {
             "liked": false,
             "likedCount": "100",
+            "sticky": false,
             "collected": false,
             "collectedCount": "50",
             "commentCount": "30",
@@ -343,6 +344,7 @@ GET /api/v1/feeds/list
   - `capa.duration`: 视频时长（秒）
 - `noteCard.interactInfo`: 互动信息
   - `liked`: 当前用户是否已点赞
+  - `sticky`: 是否为置顶笔记
   - `collected`: 当前用户是否已收藏
   - `likedCount`: 点赞数
   - `collectedCount`: 收藏数
@@ -635,7 +637,8 @@ Content-Type: application/json
             "displayTitle": "用户的笔记标题",
             "interactInfo": {
               "likedCount": "100",
-              "collectedCount": "50"
+              "collectedCount": "50",
+              "sticky": true
             }
           },
           "index": 0
@@ -658,6 +661,7 @@ Content-Type: application/json
   - `name`: 显示名称
   - `count`: 数量
 - `feeds`: 用户发布的笔记列表（结构同 Feed 列表）
+  - `feeds[].noteCard.interactInfo.sticky`: 是否为置顶笔记
 ```
 
 #### 5.2 获取当前登录用户信息
@@ -710,7 +714,8 @@ GET /api/v1/user/me
             "displayTitle": "我的笔记标题",
             "interactInfo": {
               "likedCount": "50",
-              "collectedCount": "30"
+              "collectedCount": "30",
+              "sticky": false
             }
           },
           "index": 0

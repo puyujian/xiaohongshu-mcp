@@ -213,6 +213,7 @@ https://github.com/user-attachments/assets/cc385b6c-422c-489b-a5fc-63e92c695b80
 - 获取用户基本信息（昵称、简介、头像等）
 - 获取关注数、粉丝数、获赞量统计
 - 获取用户发布的笔记内容列表
+- 返回笔记互动信息中的 `sticky` 字段，可判断是否为置顶笔记
 - 支持 HTTP API 和 MCP 工具调用
 
 **⚠️ 重要提示：**

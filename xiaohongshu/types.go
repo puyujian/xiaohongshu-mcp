@@ -48,6 +48,7 @@ type User struct {
 type InteractInfo struct {
 	Liked      bool   `json:"liked"`
 	LikedCount string `json:"likedCount"`
+	Sticky     bool   `json:"sticky"`
 
 	SharedCount  string `json:"sharedCount"`
 	CommentCount string `json:"commentCount"`
