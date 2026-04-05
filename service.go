@@ -20,6 +20,14 @@ import (
 	"github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
 )
 
+const (
+	publishExecutionTimeout = 10 * time.Minute
+)
+
+func newPublishExecutionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), publishExecutionTimeout)
+}
+
 // XiaohongshuService 小红书业务服务
 type XiaohongshuService struct {
 	activeLoginPage *rod.Page
@@ -355,9 +363,18 @@ func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishReq
 
 	// 执行发布
 	sess.Step("进入发布页并执行自动化流程", nil)
-	endErr = s.publishContent(dbgCtx, content, sess)
+	publishCtx, cancel := newPublishExecutionContext(dbgCtx)
+	defer cancel()
+	endErr = s.publishContent(publishCtx, content, sess)
 	if endErr != nil {
-		logrus.Errorf("发布内容失败: title=%s %v", content.Title, endErr)
+		message, details := explainPublishError("图文笔记发布", endErr)
+		logrus.WithFields(logrus.Fields{
+			"title":      content.Title,
+			"step":       details.Step,
+			"reason":     details.Reason,
+			"raw_error":  details.RawError,
+			"suggestion": details.Suggestion,
+		}).Error(message)
 		return nil, endErr
 	}
 
@@ -474,8 +491,18 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 
 	// 执行发布
 	sess.Step("进入发布页并执行自动化流程", nil)
-	endErr = s.publishVideo(dbgCtx, content, sess)
+	publishCtx, cancel := newPublishExecutionContext(dbgCtx)
+	defer cancel()
+	endErr = s.publishVideo(publishCtx, content, sess)
 	if endErr != nil {
+		message, details := explainPublishError("视频笔记发布", endErr)
+		logrus.WithFields(logrus.Fields{
+			"title":      content.Title,
+			"step":       details.Step,
+			"reason":     details.Reason,
+			"raw_error":  details.RawError,
+			"suggestion": details.Suggestion,
+		}).Error(message)
 		return nil, endErr
 	}
 

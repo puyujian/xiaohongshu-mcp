@@ -126,8 +126,9 @@ func (s *AppServer) publishHandler(c *gin.Context) {
 	// 执行发布
 	result, err := s.xiaohongshuService.PublishContent(c.Request.Context(), &req)
 	if err != nil {
+		message, details := explainPublishError("图文笔记发布", err)
 		respondError(c, http.StatusInternalServerError, "PUBLISH_FAILED",
-			"发布失败", err.Error())
+			message, details)
 		return
 	}
 
@@ -146,8 +147,9 @@ func (s *AppServer) publishVideoHandler(c *gin.Context) {
 	// 执行视频发布
 	result, err := s.xiaohongshuService.PublishVideo(c.Request.Context(), &req)
 	if err != nil {
+		message, details := explainPublishError("视频笔记发布", err)
 		respondError(c, http.StatusInternalServerError, "PUBLISH_VIDEO_FAILED",
-			"视频发布失败", err.Error())
+			message, details)
 		return
 	}
 

@@ -374,7 +374,7 @@
         </div>
         <div class="row" style="margin: 12px 0;">
           <button id="btnCallTool" class="primary">调用工具</button>
-          <span class="muted">超时: 30秒</span>
+          <span class="muted">发布类工具默认可跑 5 分钟</span>
         </div>
         <div class="muted" style="margin-bottom: 4px;">结果:</div>
         <div id="toolResult" class="json-output">调用结果将显示在这里</div>
@@ -1971,7 +1971,7 @@
         const data = await api('POST', `/users/${encodeURIComponent(currentDebugUser.id)}/debug/mcp/call`, {
           name: name,
           arguments: args,
-          timeout_ms: 90000
+          timeout_ms: 300000
         });
         resultEl.textContent = JSON.stringify(data, null, 2);
       } catch (e) {

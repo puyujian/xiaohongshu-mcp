@@ -81,6 +81,12 @@ type MCPContent struct {
 	Text string `json:"text,omitempty"`
 }
 
+const (
+	defaultMCPToolTimeout         = 30 * time.Second
+	defaultLongRunningToolTimeout = 5 * time.Minute
+	maxMCPToolTimeout             = 10 * time.Minute
+)
+
 // GetDebugSummary 获取调试汇总
 func (a *App) GetDebugSummary(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
@@ -743,11 +749,7 @@ func (a *App) PostDebugMCPCall(c *gin.Context) {
 		return
 	}
 
-	// 限制超时时间
-	timeout := time.Duration(req.TimeoutMs) * time.Millisecond
-	if timeout <= 0 || timeout > 2*time.Minute {
-		timeout = 30 * time.Second
-	}
+	timeout := normalizeMCPCallTimeout(req.Name, req.TimeoutMs)
 
 	result, err := a.callMCPTool(c.Request.Context(), user.Port, req.Name, req.Arguments, timeout)
 	if err != nil {
@@ -756,6 +758,30 @@ func (a *App) PostDebugMCPCall(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+func normalizeMCPCallTimeout(toolName string, timeoutMs int) time.Duration {
+	timeout := time.Duration(timeoutMs) * time.Millisecond
+	if isLongRunningMCPTool(toolName) {
+		if timeout <= 0 {
+			return defaultLongRunningToolTimeout
+		}
+		if timeout > maxMCPToolTimeout {
+			return maxMCPToolTimeout
+		}
+		return timeout
+	}
+
+	if timeout <= 0 || timeout > 2*time.Minute {
+		return defaultMCPToolTimeout
+	}
+
+	return timeout
+}
+
+func isLongRunningMCPTool(toolName string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(toolName))
+	return strings.Contains(normalized, "publish")
 }
 
 // 辅助方法

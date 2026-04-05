@@ -169,10 +169,11 @@ func (s *AppServer) handlePublishContent(ctx context.Context, args map[string]in
 	// 执行发布
 	result, err := s.xiaohongshuService.PublishContent(ctx, req)
 	if err != nil {
+		message, _ := explainPublishError("图文笔记发布", err)
 		return &MCPToolResult{
 			Content: []MCPContent{{
 				Type: "text",
-				Text: "发布失败: " + err.Error(),
+				Text: message,
 			}},
 			IsError: true,
 		}
@@ -229,10 +230,11 @@ func (s *AppServer) handlePublishVideo(ctx context.Context, args map[string]inte
 	// 执行发布
 	result, err := s.xiaohongshuService.PublishVideo(ctx, req)
 	if err != nil {
+		message, _ := explainPublishError("视频笔记发布", err)
 		return &MCPToolResult{
 			Content: []MCPContent{{
 				Type: "text",
-				Text: "发布失败: " + err.Error(),
+				Text: message,
 			}},
 			IsError: true,
 		}

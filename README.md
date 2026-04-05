@@ -227,6 +227,7 @@ https://github.com/user-attachments/assets/cc385b6c-422c-489b-a5fc-63e92c695b80
 
 - 需要先登录才能使用此功能
 - comment_id 和 user_id 至少提供一个
+- 如果 comment_id 来自通知页“评论和@”，直接使用通知返回的 `commentInfo.id` 即可
 - 这些参数可以从帖子详情的评论列表中获取
 
 </details>
@@ -859,7 +860,7 @@ npx mcporter list xiaohongshu-mcp
   - `reply_limit`: 跳过回复数过多的评论（可选），仅当 click_more_replies=true 时生效，默认 10
   - `scroll_speed`: 滚动速度（可选），`slow` | `normal` | `fast`，仅当 load_all_comments=true 时生效
 - `post_comment_to_feed` - 发表评论到小红书帖子（必需：feed_id, xsec_token, content）
-- `reply_comment_in_feed` - 回复笔记下的指定评论（必需：feed_id, xsec_token, content，以及 comment_id 或 user_id 至少一个）
+- `reply_comment_in_feed` - 回复笔记下的指定评论（必需：feed_id, xsec_token, content，以及 comment_id 或 user_id 至少一个；通知接口返回的 `commentInfo.id` 可直接复用）
 - `like_feed` - 点赞/取消点赞（必需：feed_id, xsec_token）
   - `unlike`: 是否取消点赞（可选），true 为取消点赞，默认为点赞
 - `favorite_feed` - 收藏/取消收藏（必需：feed_id, xsec_token）

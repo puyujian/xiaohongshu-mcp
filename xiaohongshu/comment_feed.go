@@ -182,6 +182,13 @@ func findCommentElement(page *rod.Page, commentID, userID string) (*rod.Element,
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		logrus.Infof("=== 查找尝试 %d/%d ===", attempt+1, maxAttempts)
 
+		if commentID != "" {
+			if el := findCommentElementByID(page, commentID); el != nil {
+				logrus.Infof("✓ 在第 %d 次尝试开始前直接命中评论: %s", attempt+1, commentID)
+				return el, nil
+			}
+		}
+
 		// === 1. 检查是否到达底部 ===
 		if checkEndContainer(page) {
 			logrus.Info("已到达评论底部，未找到目标评论")
@@ -207,6 +214,22 @@ func findCommentElement(page *rod.Page, commentID, userID string) (*rod.Element,
 		if stagnantChecks >= 10 {
 			logrus.Info("评论数量停滞超过10次，可能已加载完所有评论")
 			break
+		}
+
+		// === 3.1 自动展开当前可见的子回复 ===
+		// 通知页里的 comment_id 可能对应折叠中的二级回复；先尝试展开可见的“展开 N 条回复”按钮，
+		// 让通知返回的 commentInfo.id 也能直接映射到详情页里的 #comment-{id} 节点。
+		if commentID != "" {
+			clicked, skipped := clickShowMoreButtonsSmart(page, 0)
+			if clicked > 0 || skipped > 0 {
+				logrus.Infof("为匹配 commentID 预展开回复：点击 %d 个，跳过 %d 个", clicked, skipped)
+				time.Sleep(500 * time.Millisecond)
+
+				if el := findCommentElementByID(page, commentID); el != nil {
+					logrus.Infof("✓ 展开子回复后找到评论: %s (尝试 %d 次)", commentID, attempt+1)
+					return el, nil
+				}
+			}
 		}
 
 		// === 4. 先滚动到最后一个评论（触发懒加载）===
@@ -239,12 +262,10 @@ func findCommentElement(page *rod.Page, commentID, userID string) (*rod.Element,
 		// === 6. 滚动后立即查找（边滚动边查找）===
 		// 优先通过 commentID 查找（使用 Timeout 避免长时间等待）
 		if commentID != "" {
-			selector := fmt.Sprintf("#comment-%s", commentID)
-			logrus.Infof("尝试通过 commentID 查找: %s", selector)
+			logrus.Infof("尝试通过 commentID 查找: #comment-%s", commentID)
 
-			// 使用 Timeout 避免长时间等待
-			el, err := page.Timeout(2 * time.Second).Element(selector)
-			if err == nil && el != nil {
+			el := findCommentElementByID(page, commentID)
+			if el != nil {
 				logrus.Infof("✓ 通过 commentID 找到评论: %s (尝试 %d 次)", commentID, attempt+1)
 				return el, nil
 			}
@@ -280,4 +301,13 @@ func findCommentElement(page *rod.Page, commentID, userID string) (*rod.Element,
 	}
 
 	return nil, fmt.Errorf("未找到评论 (commentID: %s, userID: %s), 尝试次数: %d", commentID, userID, maxAttempts)
+}
+
+func findCommentElementByID(page *rod.Page, commentID string) *rod.Element {
+	selector := fmt.Sprintf("#comment-%s", commentID)
+	el, err := page.Timeout(2 * time.Second).Element(selector)
+	if err != nil || el == nil {
+		return nil
+	}
+	return el
 }

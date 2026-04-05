@@ -790,7 +790,7 @@ GET /api/v1/notifications/mentions
 - `notifications[].type`: 通知类型
 - `notifications[].time`: 通知时间戳
 - `notifications[].userInfo`: 触发通知的用户信息
-- `notifications[].commentInfo`: 评论或回复内容信息
+- `notifications[].commentInfo`: 评论或回复内容信息；其中 `commentInfo.id` 可直接作为 `/api/v1/feeds/comment/reply` 的 `comment_id`
 - `notifications[].itemInfo`: 关联笔记信息
 - `cursor`: 当前批次对应的翻页游标
 - `has_more`: 是否还有更多历史通知
@@ -939,7 +939,7 @@ Content-Type: application/json
 **请求参数说明:**
 - `feed_id` (string, required): Feed ID
 - `xsec_token` (string, required): 安全令牌
-- `comment_id` (string, required*): 要回复的评论 ID（与 user_id 二选一必填）
+- `comment_id` (string, required*): 要回复的评论 ID（与 user_id 二选一必填）；如果该值来自 `/api/v1/notifications/mentions`，请直接传 `commentInfo.id`
 - `user_id` (string, required*): 要回复的用户 ID（与 comment_id 二选一必填）
 - `content` (string, required): 回复内容
 

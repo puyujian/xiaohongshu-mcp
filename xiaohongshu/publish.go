@@ -33,7 +33,9 @@ type PublishAction struct {
 }
 
 const (
-	urlOfPublic = `https://creator.xiaohongshu.com/publish/publish?source=official`
+	urlOfPublic           = `https://creator.xiaohongshu.com/publish/publish?source=official`
+	publishStepRetryCount = 3
+	publishStepRetryDelay = 400 * time.Millisecond
 )
 
 func NewPublishImageAction(page *rod.Page) (action *PublishAction, err error) {
@@ -361,13 +363,13 @@ func submitPublish(ctx context.Context, page *rod.Page, title, content string, t
 	if !ok {
 		return errors.New("没有找到内容输入框")
 	}
-	if err := contentElem.Input(content); err != nil {
+	if err := insertContentText(page, contentElem, content); err != nil {
 		return errors.Wrap(err, "输入正文失败")
 	}
-	if err := waitAndClickTitleInput(titleElem); err != nil {
+	if err := waitAndClickTitleInput(page); err != nil {
 		return err
 	}
-	if err := inputTags(contentElem, tags); err != nil {
+	if err := inputTags(page, tags); err != nil {
 		return err
 	}
 
@@ -408,7 +410,17 @@ func submitPublish(ctx context.Context, page *rod.Page, title, content string, t
 	if err != nil {
 		return errors.Wrap(err, "查找发布按钮失败")
 	}
-	if err := submitButton.Click(proto.InputMouseButtonLeft, 1); err != nil {
+	if err := retryPublishStep("点击发布按钮", func() error {
+		if err := submitButton.ScrollIntoView(); err != nil {
+			logrus.Debugf("滚动到发布按钮失败: %v", err)
+		}
+		if err := submitButton.Click(proto.InputMouseButtonLeft, 1); err != nil {
+			removePopCover(page)
+			submitButton, err = page.Element(".publish-page-publish-btn button.bg-red")
+			return err
+		}
+		return nil
+	}); err != nil {
 		return errors.Wrap(err, "点击发布按钮失败")
 	}
 
@@ -445,7 +457,7 @@ func addProducts(ctx context.Context, page *rod.Page, productKeywords []string) 
 
 	time.Sleep(500 * time.Millisecond)
 
-	modal, err := page.Timeout(15 * time.Second).Element("div.multi-goods-selector-modal")
+	modal, err := waitForProductModal(page)
 	if err != nil {
 		return errors.Wrap(err, "打开商品选择弹窗失败")
 	}
@@ -454,16 +466,19 @@ func addProducts(ctx context.Context, page *rod.Page, productKeywords []string) 
 		logrus.Warnf("等待商品列表加载失败: %v", err)
 	}
 
-	searchInput, err := modal.Timeout(10 * time.Second).Element("input[placeholder='搜索商品ID 或 商品名称']")
-	if err != nil {
-		return errors.Wrap(err, "未找到商品搜索输入框")
-	}
-
 	for _, keyword := range keywords {
 		dbg := flowdebug.FromContext(ctx)
 		if dbg != nil {
 			dbg.Log("info", "搜索并选择商品", map[string]any{"keyword": keyword})
 			_ = dbg.WaitIfPaused(ctx)
+		}
+		modal, err = waitForProductModal(page)
+		if err != nil {
+			return errors.Wrap(err, "打开商品选择弹窗失败")
+		}
+		searchInput, err := modal.Timeout(10 * time.Second).Element("input[placeholder='搜索商品ID 或 商品名称']")
+		if err != nil {
+			return errors.Wrap(err, "未找到商品搜索输入框")
 		}
 		if err := inputProductSearchKeyword(searchInput, keyword); err != nil {
 			return errors.Wrapf(err, "搜索商品失败: %s", keyword)
@@ -477,12 +492,28 @@ func addProducts(ctx context.Context, page *rod.Page, productKeywords []string) 
 		logrus.Infof("已选中商品: %s", keyword)
 	}
 
+	modal, err = waitForProductModal(page)
+	if err != nil {
+		return errors.Wrap(err, "打开商品选择弹窗失败")
+	}
 	saveButton, err := modal.ElementR("div.d-modal-footer button", "保存")
 	if err != nil {
 		return errors.Wrap(err, "未找到商品保存按钮")
 	}
 
-	if err := saveButton.Click(proto.InputMouseButtonLeft, 1); err != nil {
+	if err := retryPublishStep("点击保存商品按钮", func() error {
+		if err := saveButton.ScrollIntoView(); err != nil {
+			logrus.Debugf("滚动到保存商品按钮失败: %v", err)
+		}
+		if clickErr := saveButton.Click(proto.InputMouseButtonLeft, 1); clickErr != nil {
+			modal, err = waitForProductModal(page)
+			if err == nil {
+				saveButton, _ = modal.ElementR("div.d-modal-footer button", "保存")
+			}
+			return clickErr
+		}
+		return nil
+	}); err != nil {
 		return errors.Wrap(err, "点击保存商品按钮失败")
 	}
 
@@ -713,11 +744,36 @@ func waitForModalClose(page *rod.Page) error {
 	return errors.New("关闭商品选择弹窗超时")
 }
 
+func waitForProductModal(page *rod.Page) (*rod.Element, error) {
+	var modal *rod.Element
+	var modalErr error
+	if err := retryPublishStep("打开商品选择弹窗", func() error {
+		modal, modalErr = page.Timeout(15 * time.Second).Element("div.multi-goods-selector-modal")
+		return modalErr
+	}); err != nil {
+		return nil, err
+	}
+	return modal, nil
+}
+
 // waitAndClickTitleInput 在填写正文后等待 1 秒并回点标题输入框，增强后续交互稳定性
-func waitAndClickTitleInput(titleElem *rod.Element) error {
+func waitAndClickTitleInput(page *rod.Page) error {
 	slog.Info("正文填写完成，准备等待后回点标题输入框")
 	time.Sleep(1 * time.Second)
-	if err := titleElem.Click(proto.InputMouseButtonLeft, 1); err != nil {
+	if err := retryPublishStep("回点标题输入框", func() error {
+		titleElem, err := findTitleInput(page)
+		if err != nil {
+			return err
+		}
+		if err := titleElem.ScrollIntoView(); err != nil {
+			logrus.Debugf("滚动到标题输入框失败: %v", err)
+		}
+		if err := titleElem.Click(proto.InputMouseButtonLeft, 1); err != nil {
+			removePopCover(page)
+			return err
+		}
+		return nil
+	}); err != nil {
 		return errors.Wrap(err, "回点标题输入框失败")
 	}
 	slog.Info("已回点标题输入框，继续后续发布流程")
@@ -746,8 +802,15 @@ func checkTitleMaxLength(page *rod.Page) error {
 }
 
 func checkContentMaxLength(page *rod.Page) error {
-	has, elem, err := page.Has(`div.edit-container div.length-error`)
-	if err != nil {
+	var (
+		has  bool
+		elem *rod.Element
+		err  error
+	)
+	if retryErr := retryPublishStep("检查正文长度元素", func() error {
+		has, elem, err = page.Has(`div.edit-container div.length-error`)
+		return err
+	}); retryErr != nil {
 		return errors.Wrap(err, "检查正文长度元素失败")
 	}
 
@@ -757,8 +820,11 @@ func checkContentMaxLength(page *rod.Page) error {
 	}
 
 	// 元素存在，说明正文超长
-	contentLength, err := elem.Text()
-	if err != nil {
+	var contentLength string
+	if retryErr := retryPublishStep("获取正文长度文本", func() error {
+		contentLength, err = elem.Text()
+		return err
+	}); retryErr != nil {
 		return errors.Wrap(err, "获取正文长度文本失败")
 	}
 
@@ -776,77 +842,102 @@ func makeMaxLengthError(elemText string) error {
 	return errors.Errorf("当前输入长度为%s，最大长度为%s", currLen, maxLen)
 }
 
-// 查找内容输入框 - 使用Race方法处理两种样式
+var contentElementSelectors = []string{
+	"div.tiptap.ProseMirror[role='textbox'][contenteditable='true']",
+	"div.ProseMirror[role='textbox'][contenteditable='true']",
+	"div.ProseMirror[contenteditable='true']",
+	"div[role='textbox'][contenteditable='true']",
+	"div.tiptap.ProseMirror",
+	"div.ql-editor",
+	"textarea",
+}
+
+// 查找内容输入框 - 优先匹配真实可编辑容器，再回退到 placeholder 方案
 func getContentElement(page *rod.Page) (*rod.Element, bool) {
-	var foundElement *rod.Element
-	var found bool
+	for _, selector := range contentElementSelectors {
+		elements, err := page.Elements(selector)
+		if err != nil {
+			logrus.Debugf("查找正文输入框失败: selector=%s err=%v", selector, err)
+			continue
+		}
+		for _, elem := range elements {
+			if elem == nil || !isElementVisible(elem) {
+				continue
+			}
+			slog.Debug("命中正文输入框选择器", "selector", selector)
+			return elem, true
+		}
+	}
 
-	page.Race().
-		Element("div.ql-editor").MustHandle(func(e *rod.Element) {
-		foundElement = e
-		found = true
-	}).
-		ElementFunc(func(page *rod.Page) (*rod.Element, error) {
-			return findTextboxByPlaceholder(page)
-		}).MustHandle(func(e *rod.Element) {
-		foundElement = e
-		found = true
-	}).
-		MustDo()
-
-	if found {
-		return foundElement, true
+	if elem, err := findTextboxByPlaceholder(page); err == nil && elem != nil {
+		slog.Debug("通过 placeholder 兜底找到正文输入框")
+		return elem, true
+	} else if err != nil {
+		logrus.Debugf("通过 placeholder 查找正文输入框失败: %v", err)
 	}
 
 	slog.Warn("no content element found by any method")
 	return nil, false
 }
 
-func inputTags(contentElem *rod.Element, tags []string) error {
+func inputTags(page *rod.Page, tags []string) error {
 	if len(tags) == 0 {
 		return nil
 	}
 
 	time.Sleep(1 * time.Second)
 
-	for i := 0; i < 20; i++ {
+	if err := retryPublishStep("准备标签输入光标", func() error {
+		contentElem, ok := getContentElement(page)
+		if !ok {
+			return errors.New("没有找到内容输入框")
+		}
+		if err := focusContentElement(contentElem); err != nil {
+			return err
+		}
+
+		for index := 0; index < 20; index++ {
+			ka, err := contentElem.KeyActions()
+			if err != nil {
+				return errors.Wrap(err, "创建键盘操作失败")
+			}
+			if err := ka.Type(input.ArrowDown).Do(); err != nil {
+				return errors.Wrap(err, "按下方向键失败")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+
 		ka, err := contentElem.KeyActions()
 		if err != nil {
 			return errors.Wrap(err, "创建键盘操作失败")
 		}
-		if err := ka.Type(input.ArrowDown).Do(); err != nil {
-			return errors.Wrap(err, "按下方向键失败")
+		if err := ka.Press(input.Enter).Press(input.Enter).Do(); err != nil {
+			return errors.Wrap(err, "按下回车键失败")
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	ka, err := contentElem.KeyActions()
-	if err != nil {
-		return errors.Wrap(err, "创建键盘操作失败")
-	}
-	if err := ka.Press(input.Enter).Press(input.Enter).Do(); err != nil {
-		return errors.Wrap(err, "按下回车键失败")
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	time.Sleep(1 * time.Second)
 
 	for _, tag := range tags {
 		tag = strings.TrimLeft(tag, "#")
-		if err := inputTag(contentElem, tag); err != nil {
+		if err := inputTag(page, tag); err != nil {
 			return errors.Wrapf(err, "输入标签[%s]失败", tag)
 		}
 	}
 	return nil
 }
 
-func inputTag(contentElem *rod.Element, tag string) error {
-	if err := contentElem.Input("#"); err != nil {
+func inputTag(page *rod.Page, tag string) error {
+	if err := insertContentTextWithRetry(page, "#"); err != nil {
 		return errors.Wrap(err, "输入#失败")
 	}
 	time.Sleep(200 * time.Millisecond)
 
 	for _, char := range tag {
-		if err := contentElem.Input(string(char)); err != nil {
+		if err := insertContentTextWithRetry(page, string(char)); err != nil {
 			return errors.Wrapf(err, "输入字符[%c]失败", char)
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -854,17 +945,16 @@ func inputTag(contentElem *rod.Element, tag string) error {
 
 	time.Sleep(1 * time.Second)
 
-	page := contentElem.Page()
 	topicContainer, err := page.Element("#creator-editor-topic-container")
 	if err != nil || topicContainer == nil {
 		slog.Warn("未找到标签联想下拉框，直接输入空格", "tag", tag)
-		return contentElem.Input(" ")
+		return insertContentTextWithRetry(page, " ")
 	}
 
 	firstItem, err := topicContainer.Element(".item")
 	if err != nil || firstItem == nil {
 		slog.Warn("未找到标签联想选项，直接输入空格", "tag", tag)
-		return contentElem.Input(" ")
+		return insertContentTextWithRetry(page, " ")
 	}
 
 	if err := firstItem.Click(proto.InputMouseButtonLeft, 1); err != nil {
@@ -877,10 +967,106 @@ func inputTag(contentElem *rod.Element, tag string) error {
 	return nil
 }
 
+func insertContentText(page *rod.Page, contentElem *rod.Element, text string) error {
+	if err := focusContentElement(contentElem); err != nil {
+		return err
+	}
+	if err := page.InsertText(text); err == nil {
+		return nil
+	}
+	return contentElem.Input(text)
+}
+
+func insertContentTextWithRetry(page *rod.Page, text string) error {
+	return retryPublishStep("输入正文/标签文本", func() error {
+		contentElem, ok := getContentElement(page)
+		if !ok {
+			return errors.New("没有找到内容输入框")
+		}
+		return insertContentText(page, contentElem, text)
+	})
+}
+
+func focusContentElement(contentElem *rod.Element) error {
+	if err := contentElem.ScrollIntoView(); err != nil {
+		logrus.Debugf("滚动到正文输入框失败: %v", err)
+	}
+	_, err := contentElem.Eval(`() => {
+		this.focus();
+		if (this.isContentEditable) {
+			const selection = window.getSelection();
+			if (selection) {
+				const range = document.createRange();
+				range.selectNodeContents(this);
+				range.collapse(false);
+				selection.removeAllRanges();
+				selection.addRange(range);
+			}
+			return;
+		}
+		if (typeof this.setSelectionRange === 'function') {
+			const value = typeof this.value === 'string' ? this.value : '';
+			this.setSelectionRange(value.length, value.length);
+		}
+	}`)
+	if err != nil {
+		return errors.Wrap(err, "聚焦正文输入框失败")
+	}
+	return nil
+}
+
+func findTitleInput(page *rod.Page) (*rod.Element, error) {
+	return page.Element("div.d-input input")
+}
+
+func retryPublishStep(action string, fn func() error) error {
+	var lastErr error
+	for attempt := 1; attempt <= publishStepRetryCount; attempt++ {
+		if err := fn(); err != nil {
+			lastErr = err
+			if attempt == publishStepRetryCount || !isRetryablePublishError(err) {
+				return err
+			}
+			slog.Warn("发布步骤失败，准备重试", "action", action, "attempt", attempt, "error", err)
+			time.Sleep(publishStepRetryDelay)
+			continue
+		}
+		return nil
+	}
+	return lastErr
+}
+
+func isRetryablePublishError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+	retryablePatterns := []string{
+		"context canceled",
+		"context deadline exceeded",
+		"cannot find context",
+		"execution context",
+		"node is detached",
+		"cannot find node",
+	}
+
+	for _, pattern := range retryablePatterns {
+		if strings.Contains(message, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func findTextboxByPlaceholder(page *rod.Page) (*rod.Element, error) {
-	elements := page.MustElements("p")
-	if elements == nil {
-		return nil, errors.New("no p elements found")
+	elements, err := page.Elements("[data-placeholder]")
+	if err != nil {
+		return nil, errors.Wrap(err, "查询 data-placeholder 元素失败")
+	}
+	if len(elements) == 0 {
+		return nil, errors.New("no data-placeholder elements found")
 	}
 
 	// 查找包含指定placeholder的元素
@@ -889,7 +1075,7 @@ func findTextboxByPlaceholder(page *rod.Page) (*rod.Element, error) {
 		return nil, errors.New("no placeholder element found")
 	}
 
-	// 向上查找textbox父元素
+	// 向上查找 textbox / contenteditable 父元素
 	textboxElem := findTextboxParent(placeholderElem)
 	if textboxElem == nil {
 		return nil, errors.New("no textbox parent found")
@@ -914,19 +1100,19 @@ func findPlaceholderElement(elements []*rod.Element, searchText string) *rod.Ele
 
 func findTextboxParent(elem *rod.Element) *rod.Element {
 	currentElem := elem
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 8; i++ {
 		parent, err := currentElem.Parent()
 		if err != nil {
 			break
 		}
 
 		role, err := parent.Attribute("role")
-		if err != nil || role == nil {
-			currentElem = parent
-			continue
+		if err == nil && role != nil && *role == "textbox" {
+			return parent
 		}
 
-		if *role == "textbox" {
+		contenteditable, err := parent.Attribute("contenteditable")
+		if err == nil && contenteditable != nil && *contenteditable == "true" {
 			return parent
 		}
 
